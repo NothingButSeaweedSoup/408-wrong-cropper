@@ -62,8 +62,11 @@ CREATE TABLE IF NOT EXISTS questions (
 
 CREATE INDEX IF NOT EXISTS idx_questions_paper ON questions(paper_id, order_no);
 
+-- 导出的 Word：只作为"下载凭据"留着（页面已经不做导出记录了，
+-- 但下载链接要靠这里的 id + file_path）；user_id 为老数据的 NULL，任何人登录都能下。
 CREATE TABLE IF NOT EXISTS exports (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
     paper_ids    TEXT NOT NULL DEFAULT '[]',
     question_ids TEXT NOT NULL DEFAULT '[]',
     filename     TEXT NOT NULL,
@@ -158,6 +161,11 @@ def migrate(conn: sqlite3.Connection) -> None:
     paper_columns = {row["name"] for row in conn.execute("PRAGMA table_info(papers)")}
     if "structure_json" not in paper_columns:
         conn.execute("ALTER TABLE papers ADD COLUMN structure_json TEXT NOT NULL DEFAULT '{}'")
+
+    # exports.user_id：给下载链接加个归属（老数据是 NULL，仍按"谁登录谁能下"处理）
+    export_columns = {row["name"] for row in conn.execute("PRAGMA table_info(exports)")}
+    if "user_id" not in export_columns:
+        conn.execute("ALTER TABLE exports ADD COLUMN user_id INTEGER")
 
 
 # ---------------------------------------------------------------- 小工具

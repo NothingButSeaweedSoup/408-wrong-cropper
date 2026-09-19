@@ -112,27 +112,6 @@
     $("#exportBtn").disabled = count === 0;
   }
 
-  async function renderHistory() {
-    const items = await api("/api/exports");
-    const box = $("#historyList");
-    box.innerHTML = "";
-    $("#historyEmpty").classList.toggle("hidden", items.length > 0);
-    for (const item of items) {
-      const row = el("div", { class: "item" });
-      row.innerHTML = `<div class="name">${ZC.esc(item.filename)}<div class="time">${item.created_at} · ${item.question_count} 题</div></div>`;
-      const dl = el("button", { class: "btn primary" }, ["下载"]);
-      dl.onclick = () => download(item.download_url);
-      const del = el("button", { class: "btn ghost" }, ["删除"]);
-      del.onclick = async () => {
-        if (!confirm("删除这条导出记录及文件？")) return;
-        await api(`/api/exports/${item.id}`, { method: "DELETE" });
-        renderHistory();
-      };
-      row.append(dl, del);
-      box.appendChild(row);
-    }
-  }
-
   /* ---------------------------------------------------------- 数据 */
   async function loadCatalog() {
     const data = await api("/api/catalog");
@@ -182,7 +161,6 @@
       });
       toast(`已生成：${result.filename}（约 ${result.page_count_estimate} 页）`);
       download(result.download_url);
-      renderHistory();
     } catch (err) {
       toast(`导出失败：${err.message}`, true);
     } finally {
@@ -207,8 +185,6 @@
     renderQuestions();
   };
   $("#exportBtn").onclick = exportBook;
-
-  ZC.onShow("history", renderHistory);
 
   // 登录成功后才会被调用（见 core.js 的登录门）
   ZC.onEnter(async () => {

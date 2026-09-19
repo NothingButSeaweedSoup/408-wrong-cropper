@@ -1,4 +1,9 @@
-"""导出错题本 Word。"""
+"""导出错题本 Word。
+
+页面不做「导出记录」了（用户明确要求去掉）：生成的 docx 只作为"下载凭据"留着 ——
+下载链接要按 id 找文件，所以 exports 表还在，但不再对外提供列表/删除接口。
+表里的行会**自动只留最近 KEEP_EXPORTS 条**（连同磁盘文件），不会越积越多。
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,7 @@ import secrets
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from .. import config, db
@@ -16,6 +21,9 @@ from ..services import layout, word_builder
 from . import common
 
 router = APIRouter(prefix="/api", tags=["export"])
+
+# 磁盘上最多留多少份导出的 Word（超出就把最老的删掉：页面没有删除入口了，得自己看着点）
+KEEP_EXPORTS = 30
 
 # 一次性下载票：手机端把 Word 交给**系统浏览器**下载时，浏览器里没有 WebView 的登录 Cookie，
 # 直接开 /download 会 401；把会话 token 塞进 URL 又会留在浏览器历史里。
@@ -34,6 +42,31 @@ def _take_ticket(ticket: str, export_id: int) -> None:
     entry = _download_tickets.pop(ticket, None)
     if entry is None or entry[0] != export_id or entry[1] < time.time():
         raise HTTPException(401, "下载链接已失效，请回页面重新点一次下载")
+
+
+def _owner_id(request: Request) -> int | None:
+    user = getattr(request.state, "user", None)
+    return int(user["id"]) if user else None
+
+
+def _check_owner(row, request: Request) -> None:
+    """老数据（user_id 为空）谁登录都能下；新数据只有生成它的账号能下。"""
+    owner = row["user_id"]
+    if owner is None:
+        return
+    if _owner_id(request) != int(owner):
+        raise HTTPException(404, "导出记录不存在")
+
+
+def _prune_exports(conn, keep: int = KEEP_EXPORTS) -> int:
+    """只留最近 keep 条导出（含磁盘文件），返回删了几条。"""
+    rows = conn.execute(
+        "SELECT id, file_path FROM exports ORDER BY id DESC LIMIT -1 OFFSET ?", (keep,)
+    ).fetchall()
+    for row in rows:
+        conn.execute("DELETE FROM exports WHERE id=?", (int(row["id"]),))
+        common.abs_path(row["file_path"]).unlink(missing_ok=True)
+    return len(rows)
 
 
 def _fetch_questions(req: ExportRequest) -> list[dict]:
@@ -92,7 +125,7 @@ def _title(questions: list[dict]) -> str:
 
 
 @router.post("/export", response_model=ExportOut)
-def export_docx(req: ExportRequest):
+def export_docx(req: ExportRequest, request: Request):
     """按勾选的题目生成 Word（AGENTS.md 2.4 / 7.5 的排版规则见 services/layout.py）。"""
     config.ensure_dirs()
     questions = _fetch_questions(req)
@@ -123,9 +156,10 @@ def export_docx(req: ExportRequest):
     )
     with db.get_conn() as conn:
         cur = conn.execute(
-            """INSERT INTO exports (paper_ids, question_ids, filename, file_path, options_json, created_at)
-               VALUES (?,?,?,?,?,?)""",
+            """INSERT INTO exports (user_id, paper_ids, question_ids, filename, file_path, options_json, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
             (
+                _owner_id(request),
                 json.dumps(sorted({int(q["paper_id"]) for q in questions})),
                 json.dumps([int(q["id"]) for q in questions]),
                 target.name,
@@ -135,6 +169,7 @@ def export_docx(req: ExportRequest):
             ),
         )
         export_id = int(cur.lastrowid)
+        _prune_exports(conn)  # 页面没有删除入口了，这里自动只留最近 KEEP_EXPORTS 份
 
     return ExportOut(
         filename=target.name,
@@ -144,29 +179,14 @@ def export_docx(req: ExportRequest):
     )
 
 
-@router.get("/exports")
-def list_exports():
-    with db.get_conn() as conn:
-        rows = conn.execute("SELECT * FROM exports ORDER BY id DESC LIMIT 200").fetchall()
-    return [
-        {
-            "id": int(r["id"]),
-            "filename": r["filename"],
-            "created_at": r["created_at"],
-            "question_count": len(json.loads(r["question_ids"] or "[]")),
-            "download_url": f"/api/exports/{int(r['id'])}/download",
-        }
-        for r in rows
-    ]
-
-
 @router.post("/exports/{export_id}/ticket")
-def export_ticket(export_id: int):
+def export_ticket(export_id: int, request: Request):
     """发一张一次性下载票，给手机端交给系统浏览器下载用（登录态必需）。"""
     with db.get_conn() as conn:
-        row = conn.execute("SELECT id FROM exports WHERE id=?", (export_id,)).fetchone()
+        row = conn.execute("SELECT id, user_id FROM exports WHERE id=?", (export_id,)).fetchone()
     if row is None:
         raise HTTPException(404, "导出记录不存在")
+    _check_owner(row, request)
     now = time.time()
     _purge_tickets(now)
     ticket = secrets.token_urlsafe(24)
@@ -175,13 +195,16 @@ def export_ticket(export_id: int):
 
 
 @router.get("/exports/{export_id}/download")
-def download_export(export_id: int, ticket: str | None = None):
+def download_export(export_id: int, request: Request, ticket: str | None = None):
     if ticket:
-        _take_ticket(ticket, export_id)  # 没票的话，中间件已经拦过登录态了
+        # 拿票下载时没有登录态（外部浏览器），归属在发票那一步已经核对过了
+        _take_ticket(ticket, export_id)
     with db.get_conn() as conn:
         row = conn.execute("SELECT * FROM exports WHERE id=?", (export_id,)).fetchone()
     if row is None:
         raise HTTPException(404, "导出记录不存在")
+    if not ticket:
+        _check_owner(row, request)
     path = common.abs_path(row["file_path"])
     if not path.exists():
         raise HTTPException(404, "文件已被删除，请重新导出")
@@ -190,15 +213,3 @@ def download_export(export_id: int, ticket: str | None = None):
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename=row["filename"],
     )
-
-
-@router.delete("/exports/{export_id}")
-def delete_export(export_id: int):
-    with db.get_conn() as conn:
-        row = conn.execute("SELECT * FROM exports WHERE id=?", (export_id,)).fetchone()
-        if row is None:
-            raise HTTPException(404, "导出记录不存在")
-        conn.execute("DELETE FROM exports WHERE id=?", (export_id,))
-    path = common.abs_path(row["file_path"])
-    path.unlink(missing_ok=True)
-    return {"ok": True}

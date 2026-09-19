@@ -257,7 +257,10 @@ function makeFetch(state) {
         return method === "POST" ? json({ total_score: 112, total_full: 150 }) : json(state.records);
       }
       if (pathOnly === "/api/scores/trend") return json(state.trend);
-      if (pathOnly === "/api/exports") return json(state.exports || []);
+      if (pathOnly === "/api/export") {
+        return json({ filename: "408错题本_2026-09-19_1200.docx", download_url: "/api/exports/1/download",
+                      question_count: 5, page_count_estimate: 3 });
+      }
       if (/^\/api\/exports\/\d+\/ticket$/.test(pathOnly)) {
         const id = pathOnly.split("/")[3];
         return json({ url: `/api/exports/${id}/download?ticket=FAKE-TICKET`, expires_in: 120 });
@@ -502,38 +505,28 @@ async function main() {
   check("主观题得 0 分时总分跟着掉到 35",
         totalsZero.includes("主观小计0/120%") && totalsZero.includes("总分35/4774%"), totalsZero.slice(-140));
 
-  console.log("\n5) 点击「导出记录」Tab");
-  const historyTab = byClass.tab.find((t) => t.dataset.view === "history");
-  historyTab.click();
+  console.log("\n5) 生成 Word（导出记录已经去掉，生成完直接下载）");
+  check("Tab 里没有「导出记录」了", !byClass.tab.some((t) => t.dataset.view === "history"),
+        byClass.tab.map((t) => t.dataset.view).join("/"));
+  check("页面上也没有 #view-history", !byId["view-history"]);
+  byClass.tab.find((t) => t.dataset.view === "pick").click(); // 回到选错题，才点得到导出
   await tick();
-  check("#view-history 显示", !byId["view-history"].classList.contains("hidden"));
-  check("拉了导出历史 /api/exports", fake.calls.includes("GET /api/exports"));
-  check("导出记录渲染出来了", byId.historyList.children.length > 0, `${byId.historyList.children.length} 条`);
-
-  console.log("\n5b) 安卓壳里点「下载」：先换一次性票，再交给系统浏览器");
-  // 普通浏览器：直接 <a download>，不该去换票
-  // 迷你 DOM 里按钮的文字在子 TextNode 上（textContent 只有直接赋值才有），所以自己拼
-  const btnText = (node) => (node.children || []).map((c) => c.textContent || "").join("");
-  const dlBtn = (function find(node) {
-    for (const child of node.children || []) {
-      if (child.tagName === "BUTTON" && btnText(child) === "下载") return child;
-      const hit = find(child);
-      if (hit) return hit;
-    }
-    return null;
-  })(byId.historyList);
-  check("找得到「下载」按钮", Boolean(dlBtn));
+  byId.questionList.children[0].click(); // 选一道题，导出按钮才会亮
+  await tick();
+  check("选中后导出按钮可用", byId.exportBtn.disabled === false);
   const callsBefore = fake.calls.length;
-  dlBtn.click();
+  byId.exportBtn.click();
   await tick();
-  check("普通浏览器不换票（直接下载）",
-        !fake.calls.slice(callsBefore).some((c) => c.includes("/ticket")),
+  await tick();
+  check("调了生成接口", fake.calls.slice(callsBefore).includes("POST /api/export"),
         fake.calls.slice(callsBefore).join(" | "));
+  check("普通浏览器直接下载（不换票）",
+        !fake.calls.slice(callsBefore).some((c) => c.includes("/ticket")), fake.calls.slice(callsBefore).join(" | "));
 
-  // 换成安卓壳的 UA，再点一次：应该 POST 换票 + 跳转到带票的下载地址
+  console.log("\n5b) 安卓壳里生成完：先换一次性票，再交给系统浏览器");
   sandbox.navigator.userAgent = "Mozilla/5.0 (Linux; Android 14) ZCWrongBook/1.0";
   sandbox.location.href = "";
-  dlBtn.click();
+  byId.exportBtn.click();
   await tick();
   await tick();
   check("壳里先要了一次性票", fake.calls.slice(callsBefore).includes("POST /api/exports/1/ticket"),

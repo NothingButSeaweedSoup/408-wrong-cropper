@@ -46,7 +46,7 @@
 │   ├── api/
 │   │   ├── papers.py         # 上传 / 列表 / 详情 / 页面图 / 重识别 / 删除 / **卷面结构(读改重建)**
 │   │   ├── questions.py      # 人工校正：改边界(自动重裁) / 合并 / 拆分 / 整卷重裁
-│   │   ├── export.py         # 生成 Word、导出历史、下载
+│   │   ├── export.py         # 生成 Word / 下载（一次性票）；**没有导出记录列表**
 │   │   ├── auth.py           # 注册 / 登录 / 登出 / me / 注册开关状态
 │   │   ├── scores.py         # 得分录入 / 列表 / 编辑 / 删除 / 趋势 / 表单结构
 │   │   └── admin.py          # 管理员：校验密钥、注册开关、用户管理
@@ -61,9 +61,9 @@
 │       ├── paper_structure.py # **每份试卷自己的题号范围与分值**（自动推导/校验/查库）
 │       └── score_service.py  # 算分、入库、趋势聚合
 ├── web/                      # 用户端 H5（无构建）
-│   ├── index.html            # 三个 Tab：选错题 / 得分 / 导出记录
+│   ├── index.html            # 两个 Tab：选错题 / 得分
 │   ├── core.js               # 公共层：请求(带 token)、提示、Tab、DOM 小工具
-│   ├── app.js                # 选错题 + 导出记录
+│   ├── app.js                # 选错题（按年份加载）+ 生成 Word
 │   ├── scores.js             # 登录注册 + 得分录入表单 + 记录列表
 │   ├── chart.js              # 自绘 SVG 折线图（双 Y 轴、悬浮详情、图例开关）
 │   └── style.css
@@ -193,7 +193,9 @@ cd admin; npm install --registry=https://registry.npmmirror.com; npm run dev   #
      其中**总分用原始分加权**，**模块先按各条记录当时的满分算得分率再加权**（各年分布不同，
      不按固定 45 分除，避免偏差）；总分的满分取各次记录满分的加权平均（都是 150 分的卷子就是 150）。
      它始终按做题时间取最近三次，与图表 X 轴怎么切无关。
-4. **导出记录**：历史生成过的 Word，可重新下载或删除。
+
+> **没有「导出记录」这个 Tab**：生成完直接下载（浏览器存到「下载」目录）。
+> 服务器上仍会留一份做下载凭据，但只在磁盘上保留最近 30 份，更老的自动删掉，不用自己清理。
 
 ### 安卓端
 见第 9 节。
@@ -202,8 +204,8 @@ cd admin; npm install --registry=https://registry.npmmirror.com; npm run dev   #
 
 | 档位 | 范围 | 凭证 |
 |---|---|---|
-| 公开 | `/api/health`、`/api/meta`、`/api/auth/status`、登录/注册 | 无 |
-| **登录即可** | 题目列表/详情/题目图（GET）、`/api/catalog`、`POST /api/export`、`/api/exports*`、`/api/scores*`、`/api/auth/me|logout` | 会话 Cookie **或** `Authorization: Bearer <token>` |
+| 公开 | `/api/health`、`/api/meta`、`/api/auth/status`、登录/注册，以及**带 `?ticket=` 的导出下载**（手机端交给外部浏览器时没有登录 Cookie，票 2 分钟一次有效） | 无 |
+| **登录即可** | 题目列表/详情/题目图（GET）、`/api/catalog`、生成 Word（`POST /api/export`）、下载/换票（`/api/exports/{id}/...`）、`/api/scores*`、`/api/auth/me|logout` | 会话 Cookie **或** `Authorization: Bearer <token>` |
 | 管理员 | 其余全部 `/api/*`：上传真题、切题校正（改/删题目）、重裁、删除真题、用户管理 | 管理员账号的登录态（`is_admin`），或 `X-Admin-Key` 兜底 |
 
 几个设计点：

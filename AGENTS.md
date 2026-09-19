@@ -154,9 +154,9 @@
 │       ├── scores.py         # 得分录入/列表/编辑/删除/趋势/schema
 │       └── admin.py          # 管理员：verify / settings / users
 ├── web/                      # 用户端 H5（原生 JS，无构建，取代 uniapp/）
-│   ├── index.html            # 登录门 + 三个 Tab：选错题 / 得分 / 导出记录
+│   ├── index.html            # 登录门 + 两个 Tab：选错题 / 得分
 │   ├── core.js               # 公共层：登录门(注册/登录/退出) / api(带 Cookie+token) / toast / Tab / DOM 工具
-│   ├── app.js                # 选错题 + 导出记录
+│   ├── app.js                # 选错题 + 生成 Word
 │   ├── scores.js             # 录入表单 + 记录列表 + 水平估计 + 趋势
 │   ├── chart.js              # 自绘 SVG 折线图
 │   └── style.css
@@ -232,10 +232,11 @@
 ### 7.7 `web/` 用户端（v0.2 实际，取代 `uniapp/`）
 - 原生 HTML/CSS/JS，**无构建步骤**，由 FastAPI 托管在 `/`，手机浏览器直接用；安卓 App 也是套这套页面。
 - 文件分工：`core.js`（**登录门** + `api()` + toast + Tab 钩子 + DOM 小工具）、
-  `app.js`（选错题 + 导出记录）、`scores.js`（录入表单 + 记录列表 + 水平估计 + 趋势）、`chart.js`（自绘 SVG）。
-- **整个用户端都要登录**：`#gate`（登录/注册卡）与 `#shell`（三个 Tab）互斥显示；
+  `app.js`（选错题 + 生成 Word）、`scores.js`（录入表单 + 记录列表 + 水平估计 + 趋势）、`chart.js`（自绘 SVG）。
+- **整个用户端都要登录**：`#gate`（登录/注册卡）与 `#shell`（两个 Tab）互斥显示；
   `core.js` 启动时先 `GET /api/auth/me`，401 就显示登录门，成功才 `showShell()` 并依次调用 `ZC.onEnter()` 注册的加载器。
-- 三个 Tab：选错题 / 得分 / 导出记录；Tab 显示回调用 `ZC.onShow(view, fn)` 注册。
+- **只有两个 Tab**：选错题 / 得分（v0.2 后期按要求去掉了「导出记录」：生成完直接下载，
+  不再有历史列表和删除入口）；Tab 显示回调用 `ZC.onShow(view, fn)` 注册。
 - **选错题页先选年份**：年份 chips 来自 `/api/catalog`，默认选最新的一年（记住上次选的），
   **没有「全部年份」**——一次只 `GET /api/questions?year=X` 拉那一年，题目多的时候不再一次性拉全库；
   拉过的年份在 `state.cache` 里留一份，切来切去不重复请求。勾选跨年份累计（存 localStorage），
@@ -539,6 +540,10 @@ node --check web\scores.js                           # 前端改动后至少过�
 - **年份是分区键**：用户端按年份拉题、成绩按年份取卷面结构，所以「导入时选错年份」会连带一整套东西错位。
   以前管理后台上传年份默认「今年-17」=2009，踩过一次（几份卷子全进 2009）；现在上传必须显式选，
   并且有 `PATCH /api/papers/{id}` 可以事后改。
+- **导出记录已经砍掉**（`GET /api/exports` 与 `DELETE /api/exports/{id}` 都删了，smoke 里断言 404/405）：
+  生成的 docx 只作为「下载凭据」留在 `exports` 表里，`api/export.py` 每次导出后 `_prune_exports()`
+  只保留最近 `KEEP_EXPORTS`（30）条并把更老的磁盘文件一起删掉；表里新加了 `user_id`，
+  下载/发票都要核对归属（老数据 user_id 为 NULL，谁登录谁能下）。
 - **手机端下载要用「一次性票」**：安卓壳把下载交给系统浏览器，浏览器里没有 WebView 的登录 Cookie，
   直接开 `/api/exports/{id}/download` 会 401。所以页面先 `POST .../ticket` 拿票再跳转；
   票存在进程内存里（`api/export.py` 的 `_download_tickets`），重启即失效——只在单进程下有效，
@@ -586,7 +591,7 @@ node --check web\scores.js                           # 前端改动后至少过�
   要么下新版 `r8.jar`（`fetch_sdk.py` 已经这么干），要么 javac 加 `-g:none`。
 - 手工打包 APK 时 `resources.arsc` **必须不压缩**（`ZIP_STORED`），否则 targetSdk 30+ 在 Android 11 上装不上。
 - WebView 必须开 `android:usesCleartextTraffic="true"`，否则 Android 9+ 直接拦掉局域网 http。
-- `<a download>` 在 WebView 里不一定触发下载，所以额外拦了 `/api/exports/*/download` 交给系统下载器。
+- `<a download>` 在 WebView 里不一定触发下载，所以额外拦了 `/api/exports/*/download` 交给系统浏览器（v1.2）。
 - 容器里 opencv 即使装了 `opencv-python-headless`，so 里仍链着 `libGL.so.1` / `libxcb.so.1`，
   精简镜像必须补 `libgl1 libxcb1`；`ldd` 一下 cv2 的 so 看 `not found` 最快（构建时 `--entrypoint sh` 进容器查）。
 - 容器里 `backend/.env` 写不进去（`/app` 只读）：`ensure_admin_key()` 已经 fail-soft，
