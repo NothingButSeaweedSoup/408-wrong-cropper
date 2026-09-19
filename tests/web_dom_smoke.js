@@ -394,8 +394,11 @@ async function main() {
   check("登录后 #gate 隐藏", byId.gate.classList.contains("hidden"));
   check("登录后 #shell 显示", !byId.shell.classList.contains("hidden"));
   check("登录后取了目录 /api/catalog", fake.calls.includes("GET /api/catalog"), fake.calls.join(" | "));
-  check("登录后取了题目 /api/questions", fake.calls.includes("GET /api/questions"));
+  check("题目只拉了默认那一年（不一次性拉全部）",
+        fake.calls.includes("GET /api/questions?year=2009") && !fake.calls.includes("GET /api/questions"),
+        fake.calls.join(" | "));
   check("选错题页渲染出卡片", byId.questionList.children.length > 0, `${byId.questionList.children.length} 个`);
+  check("年份 chips 里没有「全部年份」", !textOf(byId.yearChips).includes("全部年份"), textOf(byId.yearChips));
 
   console.log("\n3) 点击「得分」Tab（之前就是这里没反应）");
   const scoreTab = byClass.tab.find((t) => t.dataset.view === "scores");
@@ -461,15 +464,20 @@ async function main() {
 
   console.log("\n4c) 总分必须算上主观题（曾经只加了客观题）");
   const numeric = [];
+  const selects = [];
   const walk = (node) => {
     for (const child of node.children || []) {
       if (child.tagName === "INPUT" && child.attributes.type === "number") numeric.push(child);
+      if (child.tagName === "SELECT") selects.push(child);
       walk(child);
     }
   };
   walk(byId.recordForm);
-  check("表单里 5 个数字框（年份 / 2 组选择题 / 综合题得分 / 综合题满分）", numeric.length === 5, `${numeric.length} 个`);
-  const [, dsCount, coCount, subjScore, subjFull] = numeric;
+  check("年份是下拉选（有真题的年份列表），不是手填数字",
+        selects.some((s) => (s.children || []).some((o) => String(o.attributes.value) === "2010")),
+        selects.map((s) => (s.children || []).map((o) => o.attributes.value).join("/")).join(" | "));
+  check("表单里 4 个数字框（2 组选择题 / 综合题得分 / 综合题满分）", numeric.length === 4, `${numeric.length} 个`);
+  const [dsCount, coCount, subjScore, subjFull] = numeric;
   dsCount.value = "10";
   dsCount.fire("input");
   coCount.value = "10";

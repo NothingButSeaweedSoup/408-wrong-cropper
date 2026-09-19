@@ -292,6 +292,23 @@ def main() -> int:
     check(f"模块满分按这份卷子算（{expect_paper_full}）",
           structure["module_full"]["total"] == expect_paper_full, str(structure["module_full"]))
 
+    print("\n2.5b) 导入时年份填错也能救：PATCH 改年份")
+    changed = call("PATCH", f"/api/papers/{paper_id}", payload={"year": 2008})
+    check("PATCH 改年份生效", changed["year"] == 2008, str(changed["year"]))
+    in_new = call("GET", "/api/questions?year=2008", key="", token=user_token)
+    check("按新年份能查到这些题（列表缓存已失效）", len(in_new) >= 5, str(len(in_new)))
+    # 注意：库里可能本来就有别的 2009 卷子（比如用户自己导入的），所以只断言"这份卷子"不在 2009 里
+    ours = {q["id"] for q in questions}
+    still_2009 = {q["id"] for q in call("GET", "/api/questions?year=2009", key="", token=user_token)}
+    check("这份卷子不再算在 2009 里", not (ours & still_2009), f"2009 还剩 {len(still_2009)} 题")
+    try:
+        call("PATCH", f"/api/papers/{paper_id}", payload={"year": 1800})
+        check("离谱年份被拦下", False, "居然改了")
+    except urllib.error.HTTPError as exc:
+        check("离谱年份被拦下 400", exc.code == 400, str(exc.code))
+    back = call("PATCH", f"/api/papers/{paper_id}", payload={"year": 2009})
+    check("改回 2009", back["year"] == 2009, str(back["year"]))
+
     print("\n2.6) 用户端录成绩跟着试卷结构走（管理员改了立刻生效）")
     paper_schema = call("GET", f"/api/scores/schema?year=2009", key="", token=user_token)
     check("该年份的表单结构来自刚上传的试卷",

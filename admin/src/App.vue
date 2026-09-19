@@ -20,8 +20,14 @@ const paper = ref(null);
 const panel = ref("split"); // split = 切题校正；structure = 试卷结构（范围与分值）
 const page = ref(1);
 const version = ref(0);
-const uploadYear = ref(new Date().getFullYear() - 17); // 408 真题一般从 2009 起
+const uploadYear = ref(""); // 必须显式选年份：以前默认 2009，几份卷子全被塞进同一年
 const uploadTitle = ref("");
+const yearOptions = computed(() => {
+  const now = new Date().getFullYear();
+  const out = [];
+  for (let y = now; y >= 1990; y -= 1) out.push(y);
+  return out;
+});
 const fileInput = ref(null);
 const busy = ref(false);
 const toast = ref({ text: "", error: false, visible: false });
@@ -224,18 +230,34 @@ async function selectPaper(item) {
 
 async function doUpload() {
   const file = fileInput.value?.files?.[0];
+  if (!uploadYear.value) return notify("请先选择这份真题的年份", true);
   if (!file) return notify("请选择 PDF 文件", true);
   busy.value = true;
   try {
     const created = await api.upload(file, uploadYear.value, uploadTitle.value);
     await loadPapers();
     await selectPaper(created);
-    notify("已上传，正在渲染 + OCR，请稍候…");
+    notify(`已上传为 ${uploadYear.value} 年，正在渲染 + OCR，请稍候…`);
   } catch (err) {
     notify(`上传失败：${err.message}`, true);
   } finally {
     busy.value = false;
     if (fileInput.value) fileInput.value.value = "";
+  }
+}
+
+/** 改真题年份（导入时填错、或几份卷子被塞进同一年时用）。 */
+async function changeYear() {
+  if (!paper.value) return;
+  const next = Number(paper.value.year);
+  if (!next || next < 1990 || next > 2100) return notify("年份看起来不对", true);
+  try {
+    const updated = await api.patchPaper(paper.value.id, { year: next });
+    await loadPapers();
+    await loadPaper(paper.value.id, true);
+    notify(`已改为 ${updated.year} 年`);
+  } catch (err) {
+    notify(`改年份失败：${err.message}`, true);
   }
 }
 
@@ -347,13 +369,22 @@ onUnmounted(() => {
     <aside class="sidebar">
       <section class="card">
         <h2>导入真题</h2>
-        <label>年份<input type="number" v-model.number="uploadYear" min="1990" max="2100" /></label>
+        <label>
+          年份（必选，传完不能乱改会混进别的年份）
+          <select v-model="uploadYear" class="year-select">
+            <option value="">请选择年份…</option>
+            <option v-for="y in yearOptions" :key="y" :value="y">{{ y }} 年</option>
+          </select>
+        </label>
         <label>标题（可选）<input type="text" v-model="uploadTitle" placeholder="2009 年 408 真题" /></label>
         <input ref="fileInput" type="file" accept="application/pdf" />
-        <button class="btn primary" :disabled="busy" @click="doUpload">
+        <button class="btn primary" :disabled="busy || !uploadYear" @click="doUpload">
           {{ busy ? "上传中…" : "上传并自动切题" }}
         </button>
-        <p class="hint">尽量用清晰的扫描件；一次几十页需要 1~3 分钟 OCR。</p>
+        <p class="hint">
+          一年可以传多份（不同来源/不同批次）都没问题，但年份要选对：
+          用户端按年份看题、按年份录成绩，选错会和别的年份混在一起。
+        </p>
       </section>
 
       <section class="card">
@@ -365,7 +396,10 @@ onUnmounted(() => {
             :class="{ active: paper && paper.id === item.id }"
             @click="selectPaper(item)"
           >
-            <div class="title">{{ item.title || item.year + " 年 408 真题" }}</div>
+            <div class="title">
+              <span class="year-badge">{{ item.year }}</span>
+              {{ item.title || item.year + " 年 408 真题" }}
+            </div>
             <div class="meta">
               {{ item.question_count }} 题 · {{ item.page_count }} 页
               <span class="status" :data-status="item.status">{{ item.status }}</span>
@@ -414,6 +448,10 @@ onUnmounted(() => {
         <div class="paper-toolbar">
           <strong>{{ paper.title || paper.year + " 年 408 真题" }}</strong>
           <span class="status" :data-status="paper.status">{{ paper.status }}</span>
+          <span class="year-edit">
+            年份
+            <input type="number" v-model.number="paper.year" min="1990" max="2100" @change="changeYear" />
+          </span>
           <span v-if="processing" class="progress">
             {{ paper.progress }}% · {{ paper.message }}
           </span>

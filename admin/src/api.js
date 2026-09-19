@@ -71,6 +71,7 @@ export const api = {
 
   listPapers: () => request("/api/papers"),
   getPaper: (id) => request(`/api/papers/${id}`),
+  patchPaper: (id, patch) => request(`/api/papers/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deletePaper: (id) => request(`/api/papers/${id}`, { method: "DELETE" }),
   reprocess: (id) => request(`/api/papers/${id}/reprocess`, { method: "POST" }),
   recrop: (id) => request(`/api/papers/${id}/recrop`, { method: "POST" }),

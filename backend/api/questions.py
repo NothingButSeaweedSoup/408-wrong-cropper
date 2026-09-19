@@ -17,6 +17,33 @@ router = APIRouter(prefix="/api", tags=["questions"])
 
 MIN_BLOCK_PX = 20  # 块的最小高度，防止拖拽成 0 高度
 
+# ---------------------------------------------------------------- 列表缓存
+# 用户端按年份拉题目，同一年的列表会被反复请求（切年份、切科目再切回来）。
+# question_out() 要读 bbox、算 height_cm，几百道题有点白算，所以在进程里缓存一份：
+# 任何题目/试卷的写操作都调 bump_questions_cache() 让缓存整体失效（版本号一变即全部作废）。
+_questions_cache: dict[tuple, tuple[int, list]] = {}
+_cache_version = 0
+CACHE_MAX_KEYS = 64
+
+
+def bump_questions_cache() -> None:
+    """题目/试卷有任何改动就调一下（改题号、删题、合并、切分、重裁、导入、删卷）。"""
+    global _cache_version
+    _cache_version += 1
+
+
+def _cache_get(key: tuple) -> list | None:
+    hit = _questions_cache.get(key)
+    if hit and hit[0] == _cache_version:
+        return hit[1]
+    return None
+
+
+def _cache_put(key: tuple, payload: list) -> None:
+    if len(_questions_cache) >= CACHE_MAX_KEYS:
+        _questions_cache.clear()
+    _questions_cache[key] = (_cache_version, payload)
+
 
 def _paper_row(conn, paper_id: int):
     row = conn.execute("SELECT * FROM papers WHERE id=?", (paper_id,)).fetchone()
@@ -86,6 +113,10 @@ def list_questions(
     type: str | None = Query(None, pattern="^(choice|subjective)$"),
     keyword: str | None = None,
 ):
+    key = (paper_id, year, subject, type, keyword)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
     sql = (
         "SELECT q.*, p.year AS year FROM questions q JOIN papers p ON p.id = q.paper_id WHERE 1=1"
     )
@@ -108,7 +139,9 @@ def list_questions(
     sql += " ORDER BY p.year DESC, q.order_no"
     with db.get_conn() as conn:
         rows = conn.execute(sql, params).fetchall()
-    return [common.question_out(r, int(r["year"])) for r in rows]
+    payload = [common.question_out(r, int(r["year"])) for r in rows]
+    _cache_put(key, payload)
+    return payload
 
 
 @router.get("/questions/{qid}")
@@ -192,6 +225,7 @@ def patch_question(qid: int, patch: QuestionPatch):
 
         conn.execute("UPDATE questions SET source='manual' WHERE id=?", (qid,))
         row = _question_row(conn, qid)
+    bump_questions_cache()
     return common.question_out(row, int(paper["year"]))
 
 
@@ -202,6 +236,7 @@ def delete_question(qid: int):
         paper_id = int(row["paper_id"])
         conn.execute("DELETE FROM questions WHERE id=?", (qid,))
         _renumber(conn, paper_id)
+    bump_questions_cache()
     return {"ok": True}
 
 
@@ -260,6 +295,7 @@ def split_question(paper_id: int, req: SplitRequest):
         _recrop(conn, paper, lower_row)
         _renumber(conn, paper_id)
         out = common.question_out(_question_row(conn, new_id), int(paper["year"]))
+    bump_questions_cache()
     return {"ok": True, "new_question": out}
 
 
@@ -297,6 +333,7 @@ def merge_questions(paper_id: int, req: MergeRequest):
         _recrop(conn, paper, _question_row(conn, req.keep_id))
         _renumber(conn, paper_id)
         out = common.question_out(_question_row(conn, req.keep_id), int(paper["year"]))
+    bump_questions_cache()
     return {"ok": True, "question": out}
 
 
@@ -308,6 +345,7 @@ def recrop_paper(paper_id: int):
         rows = conn.execute("SELECT * FROM questions WHERE paper_id=?", (paper_id,)).fetchall()
         for row in rows:
             _recrop(conn, paper, row)
+    bump_questions_cache()
     return {"ok": True, "count": len(rows)}
 
 

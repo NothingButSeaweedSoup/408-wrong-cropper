@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from .. import config, db
+from ..api import questions as questions_api
 from . import cropper, ocr_question, paper_structure, pdf_render
 
 
@@ -118,6 +119,7 @@ def process_paper(paper_id: int) -> None:
                 "UPDATE papers SET structure_json=? WHERE id=?",
                 (json.dumps(structure, ensure_ascii=False), paper_id),
             )
+        questions_api.bump_questions_cache()  # 新导入的题要让用户端的列表缓存失效
 
         fulls = paper_structure.module_full_of(structure)
         set_status(

@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from .. import config, db, tasks
 from ..services import paper_structure, pipeline
 from . import common
+from .questions import bump_questions_cache as question_cache_bump
 
 router = APIRouter(prefix="/api/papers", tags=["papers"])
 
@@ -156,6 +157,38 @@ def rebuild_structure(paper_id: int):
     return {**saved, "module_full": paper_structure.module_full_total(saved)}
 
 
+@router.patch("/{paper_id}")
+def patch_paper(paper_id: int, payload: dict = Body(...)):
+    """改真题的年份/标题（管理员）。
+
+    为什么需要它：导入时年份填错的话，那一年会混进一堆别的卷子
+    （用户端按年份看题、按年份录成绩都会被带偏），这里给个改回来的入口。
+    """
+    fields, params = [], []
+    if payload.get("year") is not None:
+        try:
+            year = int(payload["year"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "年份要是数字") from None
+        if not 1990 <= year <= 2100:
+            raise HTTPException(400, "年份看起来不对（1990~2100）")
+        fields.append("year=?")
+        params.append(year)
+    if payload.get("title") is not None:
+        fields.append("title=?")
+        params.append(str(payload["title"])[:100])
+    if not fields:
+        raise HTTPException(400, "没有要改的字段")
+    with db.get_conn() as conn:
+        if conn.execute("SELECT 1 FROM papers WHERE id=?", (paper_id,)).fetchone() is None:
+            raise HTTPException(404, "真题不存在")
+        conn.execute(f"UPDATE papers SET {', '.join(fields)} WHERE id=?", (*params, paper_id))
+        row = conn.execute("SELECT * FROM papers WHERE id=?", (paper_id,)).fetchone()
+        count = conn.execute("SELECT COUNT(*) FROM questions WHERE paper_id=?", (paper_id,)).fetchone()[0]
+    question_cache_bump()  # 年份变了，按年份查的题目列表要失效
+    return common.paper_out(row, int(count))
+
+
 @router.delete("/{paper_id}")
 def delete_paper(paper_id: int):
     with db.get_conn() as conn:
@@ -163,6 +196,7 @@ def delete_paper(paper_id: int):
         if row is None:
             raise HTTPException(404, "真题不存在")
         conn.execute("DELETE FROM papers WHERE id=?", (paper_id,))
+    question_cache_bump()
     for folder in (config.PAGES_DIR, config.CROPS_DIR):
         target = folder / str(paper_id)
         if target.exists():

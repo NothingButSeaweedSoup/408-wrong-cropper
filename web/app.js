@@ -4,12 +4,14 @@
   const { $, api, toast, download, el } = ZC;
 
   const STORE_KEY = "zc.selected";
+  const YEAR_KEY = "zc.lastYear";
 
   const state = {
     years: [], // [{year, papers, questions}] —— 来自公开接口 /api/catalog
-    questions: [],
+    questions: [], // 当前年份的题目（服务端已按年份过滤）
+    cache: new Map(), // 年份 -> 题目列表（本地再缓存一层，切来切去不用重新请求）
     selected: new Set(JSON.parse(localStorage.getItem(STORE_KEY) || "[]")),
-    year: "all",
+    year: "",
     subject: "all",
     keyword: "",
   };
@@ -23,11 +25,19 @@
     const box = $("#yearChips");
     box.innerHTML = "";
     const years = [...state.years].sort((a, b) => b.year - a.year);
-    const items = [["all", "全部年份"], ...years.map((y) => [String(y.year), `${y.year} 年 · ${y.questions} 题`])];
-    for (const [value, label] of items) {
-      const btn = el("button", { class: `chip${state.year === value ? " active" : ""}` }, [label]);
+    if (!years.length) {
+      box.appendChild(el("span", { class: "hint" }, ["还没有导入真题，去管理后台上传 PDF"]));
+      return;
+    }
+    // 一次只加载一个年份：题目多的时候全量拉下来对服务器和手机都不友好
+    for (const item of years) {
+      const value = String(item.year);
+      const btn = el("button", { class: `chip${state.year === value ? " active" : ""}` }, [
+        `${item.year} 年 · ${item.questions} 题`,
+      ]);
       btn.onclick = () => {
         state.year = value;
+        localStorage.setItem(YEAR_KEY, value);
         renderYearChips();
         loadQuestions();
       };
@@ -54,7 +64,6 @@
     const kw = state.keyword.trim();
     return state.questions.filter((q) => {
       if (state.subject !== "all" && q.subject !== state.subject) return false;
-      if (state.year !== "all" && String(q.year) !== state.year) return false;
       if (kw && !(`${q.year}`.includes(kw) || `${q.question_no}` === kw)) return false;
       return true;
     });
@@ -64,7 +73,13 @@
     const list = visibleQuestions();
     const grid = $("#questionList");
     grid.innerHTML = "";
-    $("#pickEmpty").classList.toggle("hidden", list.length > 0);
+    const empty = $("#pickEmpty");
+    empty.classList.toggle("hidden", list.length > 0);
+    if (!list.length && state.year) {
+      empty.textContent = `${state.year} 年这一组筛选下没有题目（换个年份或把科目切回「全部科目」）。`;
+    } else if (!list.length) {
+      empty.textContent = "还没有真题数据，请先在管理后台导入真题 PDF。";
+    }
 
     const frag = document.createDocumentFragment();
     for (const q of list) {
@@ -122,13 +137,33 @@
   async function loadCatalog() {
     const data = await api("/api/catalog");
     state.years = data.years || [];
+    // 默认选最新的一年（而不是"全部年份"）；记住上次看的那一年
+    const latest = [...state.years].sort((a, b) => b.year - a.year)[0];
+    const remembered = localStorage.getItem(YEAR_KEY);
+    const known = state.years.some((y) => String(y.year) === remembered);
+    state.year = known ? remembered : latest ? String(latest.year) : "";
     renderYearChips();
   }
 
   async function loadQuestions() {
-    const query = state.year === "all" ? "" : `?year=${state.year}`;
-    state.questions = await api(`/api/questions${query}`);
-    renderQuestions();
+    if (!state.year) {
+      state.questions = [];
+      renderQuestions();
+      return;
+    }
+    $("#pickLoading").classList.remove("hidden");
+    try {
+      if (!state.cache.has(state.year)) {
+        // 服务端按年份过滤（每年最多几十道题），本地再缓存一层，切回来就不用再请求
+        state.cache.set(state.year, await api(`/api/questions?year=${state.year}`));
+      }
+      state.questions = state.cache.get(state.year);
+      renderQuestions();
+    } catch (err) {
+      toast(`加载题目失败：${err.message}`, true);
+    } finally {
+      $("#pickLoading").classList.add("hidden");
+    }
   }
 
   async function exportBook() {

@@ -38,6 +38,7 @@
     <!-- 选错题 -->
     <section id="view-pick" class="view">
       <div class="filters">
+        <div class="hint">先选年份（一次只加载这一年，题目多也不卡）</div>
         <div class="chip-row" id="yearChips"></div>
         <div class="chip-row" id="subjectChips"></div>
         <div class="row">
@@ -53,6 +54,7 @@
         </details>
       </div>
 
+      <p id="pickLoading" class="hint hidden">正在加载这一年的题目…</p>
       <div id="questionList" class="grid"></div>
       <p id="pickEmpty" class="empty">还没有真题数据，请先在管理后台导入真题 PDF。</p>
     </section>

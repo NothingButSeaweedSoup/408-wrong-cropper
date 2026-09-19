@@ -219,6 +219,10 @@
 ### 7.6 `admin/` 管理后台（v0.1 实际）
 - Vue 3 + Vite（**不用 PDF.js**）：页面图由后端渲染好，叠加层直接按同一像素坐标画在 `<img>` 上。
 - `App.vue`：上传真题、真题列表、处理进度轮询、整卷重裁/重新识别/删除。
+- **上传必须显式选年份**（下拉，默认空）：以前默认「今年-17」（正好 2009），几份卷子会被默默塞进同一年，
+  而用户端按年份看题、按年份录成绩，一混就全乱（真实踩过：几份卷子全进了 2009）。
+- 真题列表每行前面有年份徽标；工具栏里有年份输入框，改完 `PATCH /api/papers/{id}` 即把这份卷子搬到那一年
+  （只移动归属，不丢题不丢图），用来救年份填错的历史数据。
 - `components/PageEditor.vue`：色块上下边缘拖拽改边界（可开「相邻题边界联动」），点色块选位置后切分。
 - `components/QuestionTable.vue`：改题号/科目/题型、并入上一题、删除。
 - 改边界后后端会自动重裁该题图片（`PATCH /api/questions/{id}` 带 `block`）。
@@ -232,6 +236,10 @@
 - **整个用户端都要登录**：`#gate`（登录/注册卡）与 `#shell`（三个 Tab）互斥显示；
   `core.js` 启动时先 `GET /api/auth/me`，401 就显示登录门，成功才 `showShell()` 并依次调用 `ZC.onEnter()` 注册的加载器。
 - 三个 Tab：选错题 / 得分 / 导出记录；Tab 显示回调用 `ZC.onShow(view, fn)` 注册。
+- **选错题页先选年份**：年份 chips 来自 `/api/catalog`，默认选最新的一年（记住上次选的），
+  **没有「全部年份」**——一次只 `GET /api/questions?year=X` 拉那一年，题目多的时候不再一次性拉全库；
+  拉过的年份在 `state.cache` 里留一份，切来切去不重复请求。勾选跨年份累计（存 localStorage），
+  所以「选 2009 的题 + 切到 2010 再选 + 一起导出」照样能用。
 - 勾选状态存 `localStorage`；导出选项：显示标题、答题留白行数、图片宽度。
 - 下载用 `<a download>` 触发（靠 Cookie 带登录态；安卓 WebView 里再由 `DownloadListener` + 系统下载器接管）。
 - 任何请求 401 时 `core.js` 广播 `zc:need-login` → 弹回登录门（提示"登录已过期"）。
@@ -254,6 +262,8 @@ os_score / cn_score / detail_json（录入口径 + 三处明细 + 当时的满�
 
 接口（都要登录，数据按 `user_id` 隔离）：
 - `GET /api/scores/schema?year=&paper_id=` 表单结构（该试卷的结构 → 没导入试卷时退回默认，看 `source`）
+- 录入表单的**年份是下拉选**（列出有真题的年份，见 `web/scores.js` 的 `buildForm`），
+  一年真题都没导入时才退回手填数字；换年份会重新取该年的卷面结构并重建表单。
 - `POST /api/scores` 录入（算分后入库，返回带 `rates`/`total_rate` 的记录）
 - `GET /api/scores` 列表（按做题时间倒序）
 - `PUT /api/scores/{id}` / `DELETE /api/scores/{id}` 改（重算）/ 删
@@ -522,6 +532,13 @@ node --check web\scores.js                           # 前端改动后至少过�
   容器里 `ZC_DATA_DIR=/data` 不在 `/app` 下 → `ValueError: '/data/uploads/x.pdf' is not in the subpath of '/app'`
   （上传直接 500）。现在统一走 `config.rel_path()`：能相对就相对，否则存绝对路径，
   `abs_path()` 本来就同时认两种。**新增任何"入库前算路径"的地方都用它。**
+- **题目列表有进程内缓存**（`api/questions.py` 的 `_questions_cache` + `_cache_version`）：
+  按 (paper_id, year, subject, type, keyword) 缓存 `question_out()` 的结果，
+  **任何写操作都要调 `bump_questions_cache()`**（改题号/删题/合并/切分/重裁/导入/删卷，
+  以及改试卷年份），否则用户端会一直看到旧列表。新增写接口记得加这一行。
+- **年份是分区键**：用户端按年份拉题、成绩按年份取卷面结构，所以「导入时选错年份」会连带一整套东西错位。
+  以前管理后台上传年份默认「今年-17」=2009，踩过一次（几份卷子全进 2009）；现在上传必须显式选，
+  并且有 `PATCH /api/papers/{id}` 可以事后改。
 - **手机端下载要用「一次性票」**：安卓壳把下载交给系统浏览器，浏览器里没有 WebView 的登录 Cookie，
   直接开 `/api/exports/{id}/download` 会 401。所以页面先 `POST .../ticket` 拿票再跳转；
   票存在进程内存里（`api/export.py` 的 `_download_tickets`），重启即失效——只在单进程下有效，

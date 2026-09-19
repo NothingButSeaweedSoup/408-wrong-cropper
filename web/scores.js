@@ -68,11 +68,24 @@
     const subjective = input.subjective || {};
     const refs = { choice: {}, subjective: {} };
 
-    const yearInput = numberInput(
-      (draft && draft.paper_year) || (record ? record.paper_year : state.years[0]?.year) || new Date().getFullYear() - 17,
-      { min: 1990, max: 2100 }
-    );
-    yearInput.setAttribute("list", "yearList");
+    // 年份：有导入过真题就用下拉选（免得手滑填错年份，一错整条记录的口径就乱了）；
+    // 一年真题都没导入时退回数字输入框。
+    const wantedYear = (draft && draft.paper_year) || (record ? record.paper_year : null);
+    let yearInput;
+    if (state.years.length) {
+      yearInput = el("select", { class: "input sm" });
+      const years = [...new Set([wantedYear, ...state.years.map((y) => y.year)].filter(Boolean))].sort((a, b) => b - a);
+      for (const year of years) {
+        yearInput.appendChild(
+          el("option", { value: year, selected: year === (wantedYear || years[0]) ? "selected" : null }, [
+            `${year} 年`,
+          ])
+        );
+      }
+    } else {
+      yearInput = numberInput(wantedYear || new Date().getFullYear() - 17, { min: 1990, max: 2100 });
+      yearInput.setAttribute("list", "yearList");
+    }
     yearInput.classList.add("sm");
     const dateInput = el("input", { type: "date", class: "input sm", value: (record && record.practice_date) || input.practice_date || today() });
 
