@@ -1,0 +1,32 @@
+# 数据与产物
+data/
+!data/.gitkeep
+
+# 本地密钥文件（含 ZC_ADMIN_KEY，绝对不要提交）
+.env
+backend/.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 前端
+node_modules/
+admin/dist/
+.vite/
+.npm-cache/
+
+# 安卓构建（SDK 组件很大，只有源码进仓库）
+.android-sdk/
+android/build/
+
+# 日志
+*.log
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

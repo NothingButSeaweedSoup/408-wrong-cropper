@@ -1,0 +1,23 @@
+# 408 错题助手 —— 轻量化依赖清单（Python 3.12）
+#
+# 说明：相比 AGENTS.md 的原始技术栈，这里刻意去掉了 SQLAlchemy(用标准库 sqlite3)、
+# Celery/RQ(单机同步跑)、PaddleOCR(用 RapidOCR 移动版模型)、LibreOffice、Docker。
+#
+# 推荐装法（本机 py312 全局已有 fastapi/uvicorn/opencv/python-docx/numpy/pillow，
+# 用 --system-site-packages 复用，只需真正缺的几个包）：
+#   python -m venv --system-site-packages .venv
+#   .venv\Scripts\python.exe -m pip install pymupdf rapidocr-onnxruntime "starlette==0.36.3"
+#
+# 若在干净环境里从零装，再用下面这份完整清单：
+fastapi>=0.110
+# 必须与 fastapi 版本匹配：fastapi 0.110 与 starlette 1.x 不兼容
+# （Router.__init__() got an unexpected keyword argument 'on_startup'）
+starlette==0.36.3
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+pymupdf>=1.24
+pillow>=10.0
+numpy>=1.26
+opencv-python-headless>=4.9
+python-docx>=1.1
+rapidocr-onnxruntime>=1.3.24

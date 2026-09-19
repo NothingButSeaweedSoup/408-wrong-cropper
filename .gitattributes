@@ -1,0 +1,16 @@
+# 统一换行：仓库里存 LF，检出时按平台转换，避免 Windows 上全是 CRLF 噪音
+* text=auto eol=lf
+
+# 二进制文件别做换行/文本处理
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.apk binary
+*.docx binary
+*.pdf binary
+*.sqlite binary
+
+# 生成物在 GitHub 上按"非源码"统计，不污染语言占比
+admin/package-lock.json linguist-generated=true

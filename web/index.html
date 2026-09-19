@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>408 错题本</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<!-- 登录门：不登录看不到题目/导出/得分 -->
+<div id="gate" class="gate hidden">
+  <div class="gate-card">
+    <h1>408 错题本</h1>
+    <p class="hint" id="gateHint">登录后即可看题、勾选错题、生成 Word，并保存自己的得分记录。</p>
+    <div class="chip-row">
+      <button id="authTabLogin" class="chip active">登录</button>
+      <button id="authTabRegister" class="chip">注册</button>
+    </div>
+    <input id="authUser" class="input" placeholder="用户名" autocomplete="username" />
+    <input id="authPass" class="input" type="password" placeholder="密码（至少 6 位）" autocomplete="current-password" />
+    <input id="authName" class="input hidden" placeholder="昵称（可选）" />
+    <button id="authSubmit" class="btn primary">登录</button>
+    <p id="authMsg" class="hint err-text"></p>
+  </div>
+</div>
+
+<div id="shell" class="hidden">
+  <header class="topbar">
+    <h1>408 错题本</h1>
+    <nav class="tabs">
+      <button class="tab active" data-view="pick">选错题</button>
+      <button class="tab" data-view="scores">得分</button>
+      <button class="tab" data-view="history">导出记录</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- 选错题 -->
+    <section id="view-pick" class="view">
+      <div class="filters">
+        <div class="chip-row" id="yearChips"></div>
+        <div class="chip-row" id="subjectChips"></div>
+        <div class="row">
+          <input id="keyword" class="input" type="search" placeholder="搜索年份 / 题号" />
+          <button id="selectAll" class="btn ghost">全选当前</button>
+          <button id="clearAll" class="btn ghost">清空</button>
+        </div>
+        <details class="options">
+          <summary>导出选项</summary>
+          <label><input type="checkbox" id="optCaption" /> 每题显示一行标题（年份 + 题号）</label>
+          <label>答题留白行数 <input type="number" id="optNote" min="0" max="20" value="0" /></label>
+          <label>图片宽度(cm) <input type="number" id="optWidth" min="8" max="17" step="0.5" value="16" /></label>
+        </details>
+      </div>
+
+      <div id="questionList" class="grid"></div>
+      <p id="pickEmpty" class="empty">还没有真题数据，请先在管理后台导入真题 PDF。</p>
+    </section>
+
+    <!-- 得分记录与趋势 -->
+    <section id="view-scores" class="view hidden">
+      <div id="scoreApp">
+        <div class="card userbar">
+          <span id="whoami" class="who"></span>
+          <span class="spacer"></span>
+          <button id="newRecord" class="btn primary">录入成绩</button>
+          <button id="logoutBtn" class="btn ghost">退出</button>
+        </div>
+
+        <div id="recordForm" class="card hidden"></div>
+
+        <div class="card">
+          <div class="chart-head">
+            <strong>得分趋势</strong>
+            <span class="spacer"></span>
+            <select id="xAxis" class="input sm">
+              <option value="practice_date">按做题时间</option>
+              <option value="paper_year">按真题年份</option>
+            </select>
+            <select id="aggregate" class="input sm hidden">
+              <option value="latest">同年取最近一次</option>
+              <option value="avg">同年取平均</option>
+              <option value="max">同年取最高</option>
+            </select>
+          </div>
+          <div id="estimate" class="estimate"></div>
+          <div id="chart"></div>
+        </div>
+
+        <div class="card">
+          <h2>成绩记录</h2>
+          <div id="recordList" class="records"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 导出记录 -->
+    <section id="view-history" class="view hidden">
+      <div id="historyList" class="history"></div>
+      <p id="historyEmpty" class="empty">还没有导出记录。</p>
+    </section>
+  </main>
+
+  <footer class="bottombar">
+    <span id="selInfo">已选 0 题</span>
+    <button id="exportBtn" class="btn primary" disabled>生成 Word 错题本</button>
+  </footer>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/core.js"></script>
+<script src="/chart.js"></script>
+<script src="/app.js"></script>
+<script src="/scores.js"></script>
+</body>
+</html>
