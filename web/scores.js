@@ -156,49 +156,81 @@
       el("div", { class: "form-actions" }, [saveBtn, cancelBtn])
     );
 
-    /* 实时算分：口径与后端 score_service 一致 */
+    /* 实时算分：口径与后端 score_service 一致。
+       客观题（选择题答对数 × 每题分值）与主观题（逐题得分）**分开算**，最后汇总总分，
+       三块都给得分率 —— 以前这里只累加了选择题，导致表单上显示的总分漏掉主观题。 */
     function compute() {
       const modules = { ds: 0, co: 0, os: 0, cn: 0 };
+      const moduleFull = { ds: 0, co: 0, os: 0, cn: 0 };
       const choiceDetail = [];
+      let objective = 0;
+      let objectiveFull = 0;
       for (const { group, input: inputEl } of Object.values(refs.choice)) {
         let correct = Math.round(Number(inputEl.value) || 0);
         correct = Math.max(0, Math.min(group.count, correct));
         const score = round1(correct * group.per_score);
         modules[group.subject] += score;
+        moduleFull[group.subject] += group.full;
+        objective += score;
+        objectiveFull += group.full;
         choiceDetail.push({ group, correct, score });
       }
-      return { modules, choiceDetail };
+      let subjective = 0;
+      let subjectiveFull = 0;
+      for (const ref of Object.values(refs.subjective)) {
+        const full = Math.max(0, Number(ref.full.value) || 0);
+        const score = Math.max(0, Math.min(full, Number(ref.score.value) || 0));
+        modules[ref.item.subject] += score;
+        moduleFull[ref.item.subject] += full;
+        subjective += score;
+        subjectiveFull += full;
+      }
+      return {
+        modules: { ds: round1(modules.ds), co: round1(modules.co), os: round1(modules.os), cn: round1(modules.cn) },
+        moduleFull,
+        choiceDetail,
+        objective: round1(objective),
+        objectiveFull: round1(objectiveFull),
+        subjective: round1(subjective),
+        subjectiveFull: round1(subjectiveFull),
+      };
+    }
+
+    const rate = (score, full) => (full > 0 ? Math.round((score / full) * 100) : 0);
+
+    function sectionRow(label, score, full, strong = false) {
+      return el("div", { class: `total-item${strong ? " strong" : ""}` }, [
+        el("span", { class: "k" }, [label]),
+        el("b", {}, [`${score}`]),
+        el("span", { class: "hint" }, [`/ ${full}（${rate(score, full)}%）`]),
+      ]);
     }
 
     function recalc() {
-      const { modules, choiceDetail } = compute();
+      const c = compute();
       totalBox.innerHTML = "";
-      for (const { group, score } of choiceDetail) {
+      for (const { group, score } of c.choiceDetail) {
         refs.choice[group.key || `g${group.from}`].cell.textContent = `${score} / ${group.full} 分`;
       }
-      let total = 0;
-      for (const [key, value] of Object.entries(modules)) {
-        total += value;
-        const full = schema.module_full[key] || 1;
+      for (const key of ZC.MODULE_KEYS) {
+        const value = c.modules[key];
+        const full = c.moduleFull[key] || schema.module_full[key] || 0;
         totalBox.appendChild(
           el("div", { class: "total-item" }, [
             el("span", { class: "k", style: `color:${ZC.COLORS[key]}` }, [ZC.SUBJECT_FULL[key]]),
             el("b", {}, [`${round1(value)}`]),
             el("span", { class: "hint" }, [`/ ${full}`]),
             el("span", { class: "bar" }, [
-              el("i", { style: `width:${Math.min(100, (value / full) * 100)}%;background:${ZC.COLORS[key]}` }),
+              el("i", { style: `width:${full ? Math.min(100, (value / full) * 100) : 0}%;background:${ZC.COLORS[key]}` }),
             ]),
           ])
         );
       }
-      const full = schema.module_full.total || 150;
-      totalBox.appendChild(
-        el("div", { class: "total-item strong" }, [
-          el("span", { class: "k" }, ["总分"]),
-          el("b", {}, [`${round1(total)}`]),
-          el("span", { class: "hint" }, [`/ ${full}（${Math.round((total / full) * 100)}%）`]),
-        ])
-      );
+      const total = round1(c.objective + c.subjective);
+      const totalFull = round1(c.objectiveFull + c.subjectiveFull);
+      totalBox.appendChild(sectionRow("客观题", c.objective, c.objectiveFull));
+      totalBox.appendChild(sectionRow("主观题", c.subjective, c.subjectiveFull));
+      totalBox.appendChild(sectionRow("总分", total, totalFull, true));
     }
 
     /* 换年份要换表单：某年 DS 只有 10 个选择题、综合题分值也可能不同 */
@@ -257,7 +289,12 @@
         const path = state.editingId ? `/api/scores/${state.editingId}` : "/api/scores";
         const method = state.editingId ? "PUT" : "POST";
         const saved = await api(path, { method, body: JSON.stringify(payload) });
-        toast(`已保存：总分 ${saved.total_score}/${saved.total_full}`);
+        const sec = saved.sections;
+        toast(
+          sec
+            ? `已保存：客观 ${sec.objective.score}/${sec.objective.full} + 主观 ${sec.subjective.score}/${sec.subjective.full} = ${saved.total_score}/${saved.total_full}`
+            : `已保存：总分 ${saved.total_score}/${saved.total_full}`
+        );
         box.classList.add("hidden");
         state.editingId = null;
         await loadRecords();
@@ -324,7 +361,28 @@
         }
       };
       actions.append(editBtn, delBtn);
-      row.append(head, bars, actions);
+      row.append(head, bars);
+      const sec = record.sections;
+      if (sec) {
+        // 客观题 / 主观题 分开看，再给汇总（比例就是得分率）
+        row.appendChild(
+          el("div", { class: "record-sections" }, [
+            el("span", { class: "tag-sec" }, [
+              `客观 ${sec.objective.score} / ${sec.objective.full}`,
+              el("span", { class: "hint" }, [` ${sec.objective.rate}%`]),
+            ]),
+            el("span", { class: "tag-sec" }, [
+              `主观 ${sec.subjective.score} / ${sec.subjective.full}`,
+              el("span", { class: "hint" }, [` ${sec.subjective.rate}%`]),
+            ]),
+            el("span", { class: "tag-sec strong" }, [
+              `合计 ${sec.total.score} / ${sec.total.full}`,
+              el("span", { class: "hint" }, [` ${sec.total.rate}%`]),
+            ]),
+          ])
+        );
+      }
+      row.appendChild(actions);
       if (record.note) row.appendChild(el("div", { class: "hint note" }, [`备注：${record.note}`]));
       box.appendChild(row);
     }
@@ -352,6 +410,18 @@
         ]),
       ])
     );
+
+    const sec = est.sections || {};
+    if (sec.objective !== null && sec.objective !== undefined) {
+      // 客观题 / 主观题 分开看：总分掉了到底是哪一块拖的
+      box.appendChild(
+        el("div", { class: "record-sections" }, [
+          el("span", { class: "tag-sec" }, [`客观题 ${sec.objective}%`]),
+          el("span", { class: "tag-sec" }, [`主观题 ${sec.subjective}%`]),
+          el("span", { class: "tag-sec strong" }, [`合计 ${est.total} / ${est.total_full}（${est.total_rate}%）`]),
+        ])
+      );
+    }
 
     const columns = [...ZC.MODULE_KEYS.map((key) => [key, ZC.SUBJECT_FULL[key]]), ["total", "总分"]];
     const table = el("table", { class: "estimate-table" });

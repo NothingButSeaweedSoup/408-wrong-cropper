@@ -196,6 +196,16 @@ select.input {
 .mini { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
 .mini i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 .record-actions { display: flex; gap: 6px; }
+/* 客观题 / 主观题 / 合计 三块（录入表单与记录列表都用） */
+.record-sections { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
+.tag-sec {
+  background: #f2f4f7;
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 12px;
+  color: #444;
+}
+.tag-sec.strong { background: #eef4ff; color: var(--brand); font-weight: 600; }
 .note { margin-top: 4px; }
 
 /* ---------------------------------------------------------------- 当前水平估计（小表格） */

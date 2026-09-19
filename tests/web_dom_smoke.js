@@ -130,6 +130,13 @@ class Element extends Node {
     /* 卡片上的角标/标签是拼 HTML 塞进去的，测试只关心元素数量，这里当空实现 */
   }
   scrollIntoView() {}
+  /** 触发某个事件（迷你 DOM 只做前端真正用到的那几种） */
+  fire(type) {
+    const event = { target: this, preventDefault() {}, stopPropagation() {} };
+    const handler = this[`on${type}`];
+    if (typeof handler === "function") handler(event);
+    (this.listeners[type] || []).forEach((fn) => fn(event));
+  }
   click() {
     if (typeof this.onclick === "function") this.onclick({ target: this, preventDefault() {}, stopPropagation() {} });
     (this.listeners.click || []).forEach((fn) => fn({ target: this, preventDefault() {}, stopPropagation() {} }));
@@ -280,6 +287,11 @@ async function main() {
       {
         id: 1, paper_year: 2009, practice_date: "2026-09-19", total_score: 112, total_full: 150, total_rate: 74.7,
         ds: 36, co: 32, os: 25, cn: 19, note: "第一次", rates: { ds: 80, co: 71.1, os: 71.4, cn: 76 },
+        sections: {
+          objective: { score: 60, full: 80, rate: 75 },
+          subjective: { score: 52, full: 70, rate: 74.3 },
+          total: { score: 112, full: 150, rate: 74.7 },
+        },
       },
     ],
     trend: {
@@ -290,6 +302,7 @@ async function main() {
       empty: false,
       estimate: {
         count: 1, weights: [1], base_weights: [0.5], modules: { ds: 80, co: 71.1, os: 71.4, cn: 76 },
+        sections: { objective: 75, subjective: 74.3 },
         total: 112, total_full: 150, total_rate: 74.7, samples: [{ practice_date: "2026-09-19", paper_year: 2009, total_score: 112, weight: 1 }],
         message: "只有 1 次记录，权重已按比例归一化",
       },
@@ -345,6 +358,14 @@ async function main() {
   }
   const ZC = sandbox.ZC;
   const tick = () => new Promise((resolve) => setTimeout(resolve, 30));
+  /** 把一个子树里的文字都拼起来（迷你 DOM 没有 innerText，只能自己走） */
+  const textOf = (node) => {
+    let out = node.textContent || "";
+    for (const child of node.children || []) out += " " + textOf(child);
+    return out;
+  };
+  /** 去掉所有空白再比：拼出来的文字层级之间会多空格 */
+  const squash = (text) => String(text).replace(/\s+/g, "");
 
   console.log("1) 未登录时应显示登录门");
   await tick();
@@ -377,7 +398,13 @@ async function main() {
   check("拉了成绩列表 /api/scores", fake.calls.includes("GET /api/scores"), fake.calls.join(" | "));
   check("拉了趋势 /api/scores/trend", fake.calls.some((c) => c.startsWith("GET /api/scores/trend")));
   check("渲染了成绩记录", byId.recordList.children.length > 0, `${byId.recordList.children.length} 条`);
+  check("记录里客观/主观/合计分开显示",
+        textOf(byId.recordList).includes("客观 60 / 80") && textOf(byId.recordList).includes("主观 52 / 70"),
+        textOf(byId.recordList).slice(0, 120));
   check("渲染了当前水平估计", byId.estimate.children.length > 0);
+  check("估计里客观/主观分开给比例",
+        textOf(byId.estimate).includes("客观题 75%") && textOf(byId.estimate).includes("主观题 74.3%"),
+        textOf(byId.estimate).slice(0, 120));
   check("渲染了趋势图", byId.chart.children.length > 0);
   check("顶栏显示了用户名", String(byId.whoami.textContent).includes("测试"), String(byId.whoami.textContent));
 
@@ -389,11 +416,6 @@ async function main() {
   check("表单里生成了控件", byId.recordForm.children.length > 3, `${byId.recordForm.children.length} 个`);
 
   /* 表单结构必须来自那份试卷，不能写死 1-11/12-22 + 每题 2 分 */
-  const textOf = (node) => {
-    let out = node.textContent || "";
-    for (const child of node.children || []) out += " " + textOf(child);
-    return out;
-  };
   let formText = textOf(byId.recordForm);
   check("表单按试卷结构显示每题分值", formText.includes("每题 2 分"), formText.slice(0, 80));
   check("表单显示了结构来源", formText.includes("2009 年真题"));
@@ -424,6 +446,37 @@ async function main() {
   check("题号范围跟着结构变", formText.includes("数据结构 1-10"));
   check("综合题满分跟结构（41 题 12 分）", formText.includes("第 41 题"));
   check("按新年份要了结构", fake.calls.some((c) => c === "GET /api/scores/schema?year=2010"), fake.calls.join(" | "));
+
+  console.log("\n4c) 总分必须算上主观题（曾经只加了客观题）");
+  const numeric = [];
+  const walk = (node) => {
+    for (const child of node.children || []) {
+      if (child.tagName === "INPUT" && child.attributes.type === "number") numeric.push(child);
+      walk(child);
+    }
+  };
+  walk(byId.recordForm);
+  check("表单里 5 个数字框（年份 / 2 组选择题 / 综合题得分 / 综合题满分）", numeric.length === 5, `${numeric.length} 个`);
+  const [, dsCount, coCount, subjScore, subjFull] = numeric;
+  dsCount.value = "10";
+  dsCount.fire("input");
+  coCount.value = "10";
+  coCount.fire("input");
+  subjFull.value = "12";
+  subjFull.fire("input");
+  subjScore.value = "12";
+  subjScore.fire("input");
+  formText = textOf(byId.recordForm);
+  // 客观题 10×1.5 + 10×2 = 35/35，主观题 12/12，合计 47/47
+  check("客观题小计 = 35 / 35（100%）", squash(formText).includes("客观题35/35（100%）"), formText.slice(-160));
+  check("主观题小计 = 12 / 12（100%）", squash(formText).includes("主观题12/12（100%）"), formText.slice(-160));
+  check("总分 = 客观 + 主观 = 47 / 47（100%）", squash(formText).includes("总分47/47（100%）"), formText.slice(-160));
+
+  subjScore.value = "0";
+  subjScore.fire("input");
+  formText = squash(textOf(byId.recordForm));
+  check("主观题得 0 分时总分跟着掉到 35",
+        formText.includes("主观题0/12（0%）") && formText.includes("总分35/47（74%）"), formText.slice(-160));
 
   console.log("\n5) 点击「导出记录」Tab");
   const historyTab = byClass.tab.find((t) => t.dataset.view === "history");

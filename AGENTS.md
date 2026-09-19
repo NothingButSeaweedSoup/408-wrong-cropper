@@ -238,6 +238,11 @@
   默认（兜底）结构是 1-11 DS、12-22 计组、23-32 OS、33-40 计网，每题 2 分（共 80 分）；
 - **综合题**逐题填**得分**与**满分**（满分默认取结构——切题时从卷面 `(8分)` 读或按默认表，用户可手改）；
 - 模块分 = 该模块选择题得分 + 该模块综合题得分；总分 = 四模块之和（默认满分 150，各年可能不同）。
+- **客观题与主观题分开算、再汇总**（`sections_from_breakdown()`）：客观题（答对数 × 每题分值）、
+  主观题（逐题得分）、合计三块都给 `{score, full, rate}`，随记录存进 `detail_json.sections`；
+  `record_out()` 对**老记录**（detail_json 里没有 sections）按 `breakdown` 现算，不需要迁移。
+  录入表单的实时算分、记录列表、趋势 `points[].sections`、水平估计的「客观题 x% / 主观题 y%」都用它——
+  这样总分掉了能一眼看出是哪一块拖的。
 
 数据表 `exam_records`：`user_id / paper_year / practice_date / total_score / ds_score / co_score /
 os_score / cn_score / detail_json（录入口径 + 三处明细 + 当时的满分）/ note / created_at`。
@@ -497,6 +502,10 @@ node --check web\scores.js                           # 前端改动后至少过�
 - 迷你 DOM 只实现 `#id` / `.class` 选择器和用到的那批 API；前端若用了新的 DOM API
   （如 `createDocumentFragment`、`insertAdjacentHTML`、`el.id`），要在测试脚手架里补上，否则会"因为脚手架缺失"而失败。
 - 用户端关键入口（登录门 → 得分 Tab → 「录入成绩」）都在这个测试里断言过，别再漏。
+- **录入表单的「实时总分」曾经只加了客观题**（`compute()` 漏了遍历主观题输入框），主观题白填；
+  保存后后端算的分一直是对的，只有表单上那个数字少了一截（用户就是这么发现的）。
+  现在 `web_dom_smoke.js` 第 4c 段会填满表单并断言「客观题 35/35 + 主观题 12/12 = 总分 47/47」
+  （用 `squash()` 去掉迷你 DOM 拼字符串时多出来的空格再比）。改算分口径时别再漏主观题。
 
 **安卓相关（实际踩过的）**
 - build-tools 34 自带 d8 是 R8 8.2.2，遇到 **JDK 21** 编译出的匿名内部类会崩
@@ -618,6 +627,8 @@ CREATE TABLE exam_records (
   没人能看到别人的成绩（`tests/test_auth_admin.py` / `test_scores.py` 有覆盖）。
 - **当前水平估计**（v0.2 追加）：最近三次 50/35/15 加权，不足三次归一化；总分用原始分、模块用各自当时的满分算得分率；
   挂在 trend 响应的 `estimate` 上，前端只画成曲线图上方的小表格。实现与坑见 7.8。
+- **客观 / 主观 / 汇总**（v0.2 追加）：每条记录与每个趋势点都带 `sections`（分数 + 满分 + 得分率），
+  总分 = 客观 + 主观；`estimate.sections` 给最近三次加权后的两块得分率，前端显示在曲线图上方那行小标签里。
 
 ## 13. 未来扩展
 

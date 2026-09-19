@@ -139,10 +139,39 @@ def compute(payload: dict, schema: dict | None = None) -> dict:
             },
             # 这条记录**当时**的满分（按实际录进去的分值累加）：老记录永远按自己的满分算得分率
             "module_full": module_full_from_breakdown(details),
+            # 客观题（选择）/ 主观题 / 合计 三块的分数、满分与得分率
+            "sections": sections_from_breakdown(details),
             "breakdown": details,
             "schema_source": schema.get("source") or "default",
             "paper_id": schema.get("paper_id"),
         },
+    }
+
+
+def _section(score: float, full: float) -> dict:
+    return {
+        "score": round(score, 1),
+        "full": round(full, 1),
+        "rate": round(score / full * 100, 1) if full > 0 else 0.0,
+    }
+
+
+def sections_from_breakdown(details: dict) -> dict:
+    """客观题（选择题）/ 主观题 / 合计 三块的小计与得分率。
+
+    客观题和主观题是两套口径（答对个数 × 每题分值 / 逐题得分），分开算再汇总，
+    这样"总分偏低"时一眼能看出是客观题还是主观题拖的。分母用**当时录进去的满分**。
+    """
+    choice = details.get("choice") or []
+    subjectives = details.get("subjective") or []
+    objective_score = sum(float(g.get("score") or 0) for g in choice)
+    objective_full = sum(float(g.get("full") or 0) for g in choice)
+    subjective_score = sum(float(s.get("score") or 0) for s in subjectives)
+    subjective_full = sum(float(s.get("full") or 0) for s in subjectives)
+    return {
+        "objective": _section(objective_score, objective_full),
+        "subjective": _section(subjective_score, subjective_full),
+        "total": _section(objective_score + subjective_score, objective_full + subjective_full),
     }
 
 
@@ -221,6 +250,10 @@ def record_out(row: sqlite3.Row | dict) -> dict:
     scores = {key: float(data[f"{key}_score"]) for key in MODULES}
     full = module_full_of_record(detail)
     total_full = full["total"]
+    sections = (detail or {}).get("sections")
+    if not sections:
+        # 老记录没存 sections：按明细现算（明细一直都在）
+        sections = sections_from_breakdown((detail or {}).get("breakdown") or {})
     return {
         **data,
         "total_score": float(data["total_score"]),
@@ -231,6 +264,8 @@ def record_out(row: sqlite3.Row | dict) -> dict:
         "module_full": full,
         "total_full": total_full,
         "total_rate": round(float(data["total_score"]) / total_full * 100, 1) if total_full else 0.0,
+        # 客观题 / 主观题 / 合计（分数 + 满分 + 得分率），列表与录入表单都用它
+        "sections": sections,
     }
 
 
@@ -282,6 +317,7 @@ def estimate(conn: sqlite3.Connection, user_id: int, limit: int = 3) -> dict:
             "weights": [],
             "base_weights": [],
             "modules": {key: None for key in MODULES},
+            "sections": {"objective": None, "subjective": None},
             "total": None,
             "total_full": total_full,
             "total_rate": None,
@@ -295,6 +331,7 @@ def estimate(conn: sqlite3.Connection, user_id: int, limit: int = 3) -> dict:
     weights = [round(w / base_sum, 4) for w in base]  # 不足 3 次时归一化
 
     module_rates = {key: 0.0 for key in MODULES}
+    section_rates = {"objective": 0.0, "subjective": 0.0}
     total = 0.0
     total_full_acc = 0.0
     samples: list[dict] = []
@@ -303,6 +340,9 @@ def estimate(conn: sqlite3.Connection, user_id: int, limit: int = 3) -> dict:
         sample_rates = data["rates"]
         for key in MODULES:
             module_rates[key] += sample_rates[key] * weight
+        section = data["sections"]
+        for key in section_rates:
+            section_rates[key] += float(section[key]["rate"]) * weight
         total += float(data["total_score"]) * weight
         total_full_acc += float(data["total_full"]) * weight
         samples.append(
@@ -315,6 +355,7 @@ def estimate(conn: sqlite3.Connection, user_id: int, limit: int = 3) -> dict:
                 "module_full": {key: data["module_full"][key] for key in MODULES},
                 "total_full": data["total_full"],
                 "rates": sample_rates,
+                "sections": section,
             }
         )
 
@@ -324,6 +365,8 @@ def estimate(conn: sqlite3.Connection, user_id: int, limit: int = 3) -> dict:
         "weights": weights,
         "base_weights": base,
         "modules": {key: round(module_rates[key], 1) for key in MODULES},
+        # 客观题 / 主观题 分开看（各自按记录当时的满分算得分率再加权）
+        "sections": {key: round(value, 1) for key, value in section_rates.items()},
         "total": round(total, 1),
         "total_full": est_full,
         "total_rate": round(total / est_full * 100, 1) if est_full else 0.0,
@@ -352,10 +395,18 @@ def trend(conn: sqlite3.Connection, user_id: int, x_axis: str = "practice_date",
             if aggregate == "avg":
                 # 多条取平均：模块按各条自己的得分率平均，总分按原始分平均
                 rates = {
-                    key: round(sum(out["rates"][key] for out in outs) / len(outs), 1) for key in MODULES
+                    key: round(sum(item["rates"][key] for item in outs) / len(outs), 1) for key in MODULES
                 }
-                values = {key: round(sum(out[key] for out in outs) / len(outs), 1) for key in MODULES}
-                total_full = round(sum(out["total_full"] for out in outs) / len(outs), 1)
+                values = {key: round(sum(item[key] for item in outs) / len(outs), 1) for key in MODULES}
+                total_full = round(sum(item["total_full"] for item in outs) / len(outs), 1)
+                sections = {
+                    key: {
+                        "score": round(sum(item["sections"][key]["score"] for item in outs) / len(outs), 1),
+                        "full": round(sum(item["sections"][key]["full"] for item in outs) / len(outs), 1),
+                        "rate": round(sum(item["sections"][key]["rate"] for item in outs) / len(outs), 1),
+                    }
+                    for key in ("objective", "subjective", "total")
+                }
                 points.append(
                     {
                         "label": str(year),
@@ -365,7 +416,8 @@ def trend(conn: sqlite3.Connection, user_id: int, x_axis: str = "practice_date",
                         **values,
                         "total_score": round(sum(values.values()), 1),
                         "rates": rates,
-                        "module_full": module_full_axis(out for out in outs),
+                        "sections": sections,
+                        "module_full": module_full_axis(item["module_full"] for item in outs),
                         "total_full": total_full,
                     }
                 )
@@ -384,6 +436,7 @@ def trend(conn: sqlite3.Connection, user_id: int, x_axis: str = "practice_date",
                         **{key: out[key] for key in MODULES},
                         "total_score": out["total_score"],
                         "rates": out["rates"],
+                        "sections": out["sections"],
                         "module_full": {key: out["module_full"][key] for key in MODULES},
                         "total_full": out["total_full"],
                     }
@@ -403,6 +456,7 @@ def trend(conn: sqlite3.Connection, user_id: int, x_axis: str = "practice_date",
                     **{key: out[key] for key in MODULES},
                     "total_score": out["total_score"],
                     "rates": out["rates"],
+                    "sections": out["sections"],
                     "module_full": {key: out["module_full"][key] for key in MODULES},
                     "total_full": out["total_full"],
                 }

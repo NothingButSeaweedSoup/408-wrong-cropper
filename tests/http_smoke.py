@@ -193,10 +193,27 @@ def main() -> int:
     })
     check("半对记录分数合理", 0 < partial["total_score"] < expect_full, str(partial["total_score"]))
 
+    sec = perfect["sections"]
+    check("客观题：80/80 = 100%",
+          sec["objective"] == {"score": 80.0, "full": 80.0, "rate": 100.0}, str(sec["objective"]))
+    check("主观题：70/70 = 100%",
+          sec["subjective"] == {"score": 70.0, "full": 70.0, "rate": 100.0}, str(sec["subjective"]))
+    check("合计 = 客观 + 主观",
+          sec["total"]["score"] == sec["objective"]["score"] + sec["subjective"]["score"]
+          and sec["total"]["score"] == perfect["total_score"], str(sec["total"]))
+    psec = partial["sections"]
+    check("半对记录：主观题的分算进总分了",
+          psec["subjective"]["score"] > 0
+          and round(psec["objective"]["score"] + psec["subjective"]["score"], 1) == partial["total_score"],
+          f'{psec["objective"]["score"]} + {psec["subjective"]["score"]} = {partial["total_score"]}')
+
     records = call("GET", "/api/scores", key="", token=user_token)
     check("列表 2 条且按时间倒序", len(records) == 2 and records[0]["practice_date"] == "2026-09-25",
           str([r["practice_date"] for r in records]))
     check("带模块得分率", records[0]["rates"]["ds"] > 0 and records[0]["total_full"] == expect_full)
+    check("列表里也带客观/主观/合计",
+          records[0]["sections"]["total"]["rate"] == records[0]["total_rate"],
+          str(records[0]["sections"]["total"]))
 
     trend = call("GET", "/api/scores/trend?x_axis=practice_date", key="", token=user_token)
     check("时间轴 2 个点", len(trend["labels"]) == 2, str(trend["labels"]))
@@ -216,6 +233,9 @@ def main() -> int:
           f'{estimate["modules"]} total={estimate["total"]}')
     check("估计样本按时间倒序", [s["practice_date"] for s in estimate["samples"]] == ["2026-09-25", "2026-09-17"],
           str([s["practice_date"] for s in estimate["samples"]]))
+    check("水平估计里客观/主观分开给比例",
+          set(estimate["sections"]) == {"objective", "subjective"} and estimate["sections"]["objective"] > 0,
+          str(estimate["sections"]))
 
     edited = call("PUT", f"/api/scores/{partial['id']}", key="", token=user_token, payload={
         **full, "practice_date": "2026-09-26", "note": "改过"})

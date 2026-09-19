@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -100,6 +101,61 @@ def test_compute() -> None:
           str([(g["from"], g["to"]) for g in schema["choice_groups"]]))
 
 
+def test_sections() -> None:
+    """客观题 / 主观题 分开算，再汇总（含比例）。
+
+    以前前端表单只把选择题加起来当总分，主观题白填了；这里把口径钉在服务端，
+    顺便保证老记录（detail_json 里没有 sections 字段）也能现算出来。
+    """
+    print("客观题 / 主观题 / 汇总（含比例）")
+    payload = {
+        **full_marks_payload(2009, "2026-09-19"),
+        "choice": {"ds": 9, "co": 8, "os": 7, "cn": 6},          # 60 / 80
+        "subjective": [{"qno": 41, "score": 8, "full": 10}, {"qno": 42, "score": 10, "full": 13},
+                       {"qno": 43, "score": 10, "full": 13}, {"qno": 44, "score": 6, "full": 10},
+                       {"qno": 45, "score": 5, "full": 7}, {"qno": 46, "score": 6, "full": 8},
+                       {"qno": 47, "score": 7, "full": 9}],       # 52 / 70
+    }
+    result = score_service.compute(payload)
+    sections = result["detail"]["sections"]
+    check("客观题 60/80 = 75%", sections["objective"] == {"score": 60.0, "full": 80.0, "rate": 75.0},
+          str(sections["objective"]))
+    check("主观题 52/70 = 74.3%", sections["subjective"] == {"score": 52.0, "full": 70.0, "rate": 74.3},
+          str(sections["subjective"]))
+    check("合计 112/150 = 74.7%", sections["total"] == {"score": 112.0, "full": 150.0, "rate": 74.7},
+          str(sections["total"]))
+    check("总分 = 客观 + 主观",
+          sections["total"]["score"] == sections["objective"]["score"] + sections["subjective"]["score"]
+          and sections["total"]["full"] == sections["objective"]["full"] + sections["subjective"]["full"])
+    check("总分与入库口径一致", sections["total"]["score"] == result["total_score"], str(result["total_score"]))
+
+    db.init_db()
+    with db.get_conn() as conn:
+        user = user_service.create_user(conn, "sec_user", "secret123", "分块")
+        uid = int(user["id"])
+        row = score_service.save_record(conn, uid, payload)
+        out = score_service.record_out(row)
+        check("记录里带 sections", out["sections"]["subjective"]["score"] == 52.0, str(out["sections"]))
+
+        # 老记录：detail_json 里没有 sections（这次改动之前存的），要按 breakdown 现算
+        detail = dict(out["detail"])
+        detail.pop("sections", None)
+        conn.execute("UPDATE exam_records SET detail_json=? WHERE id=?",
+                     (json.dumps(detail, ensure_ascii=False), int(row["id"])))
+        old = score_service.record_out(
+            conn.execute("SELECT * FROM exam_records WHERE id=?", (int(row["id"]),)).fetchone()
+        )
+        check("老记录也能算出 sections", old["sections"]["total"] == sections["total"], str(old["sections"]))
+
+        est = score_service.estimate(conn, uid)
+        check("水平估计里客观/主观分开", est["sections"]["objective"] == 75.0 and est["sections"]["subjective"] == 74.3,
+              str(est["sections"]))
+        data = score_service.trend(conn, uid)
+        check("趋势点里也带 sections",
+              data["points"][0]["sections"]["objective"]["rate"] == 75.0,
+              str(data["points"][0]["sections"]))
+
+
 def test_records_and_trend() -> None:
     print("入库 + 列表 + 趋势")
     db.init_db()
@@ -184,14 +240,16 @@ def test_users() -> None:
             except user_service.AuthError as exc:
                 check(label + " 被拦下", True, str(exc))
 
-        token_info = user_service.issue_token(conn, 1)
+        token_info = user_service.issue_token(conn, int(conn.execute(
+            "SELECT id FROM users WHERE username='tester'").fetchone()["id"]))
         check("token 能换回用户", user_service.user_by_token(conn, token_info["token"])["username"] == "tester")
         user_service.revoke(conn, token_info["token"])
         check("登出后 token 失效", user_service.user_by_token(conn, token_info["token"]) is None)
 
+        tester_id = int(conn.execute("SELECT id FROM users WHERE username='tester'").fetchone()["id"])
         conn.execute(
             "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)",
-            ("expired-token", 1, "2020-01-01 00:00:00", "2020-01-02 00:00:00"),
+            ("expired-token", tester_id, "2020-01-01 00:00:00", "2020-01-02 00:00:00"),
         )
         check("过期 token 失效", user_service.user_by_token(conn, "expired-token") is None)
         check("bearer 解析", user_service.bearer_token("Bearer abc") == "abc"
@@ -303,6 +361,7 @@ def test_admin_flags() -> None:
 if __name__ == "__main__":
     test_compute()
     test_records_and_trend()
+    test_sections()
     test_level_estimate()
     test_users()
     test_admin_flags()
