@@ -168,7 +168,7 @@
 │   ├── app/{AndroidManifest.xml, res/, java/com/zc/wrongbook/MainActivity.java}
 │   ├── fetch_sdk.py          # 下载最小 SDK（platform + build-tools + R8）
 │   ├── build_apk.py          # aapt2 → javac → d8 → zipalign → apksigner
-│   └── dist/408错题本-1.2.apk
+│   └── dist/408错题本-1.3.apk
 └── tests/
     ├── test_ocr_crop.py      # 题号正则 / 过滤 / 墨迹检测 / 卷面结构
     ├── test_layout.py        # 换页与拆分规则
@@ -242,7 +242,8 @@
   拉过的年份在 `state.cache` 里留一份，切来切去不重复请求。勾选跨年份累计（存 localStorage），
   所以「选 2009 的题 + 切到 2010 再选 + 一起导出」照样能用。
 - 勾选状态存 `localStorage`；导出选项：显示标题、答题留白行数、图片宽度。
-- 下载用 `<a download>` 触发（靠 Cookie 带登录态；安卓 WebView 里再由 `DownloadListener` + 系统下载器接管）。
+- 下载用 `<a download>` 触发（靠 Cookie 带登录态）；**安卓壳里换成「15 分钟临时链接 + 复制链接面板」**
+  （`core.js` 的 `download()` 分叉，见 7.10），桌面/手机浏览器不变。
 - 任何请求 401 时 `core.js` 广播 `zc:need-login` → 弹回登录门（提示"登录已过期"）。
 
 ### 7.8 `backend/services/score_service.py` 与 `backend/api/scores.py`（**已实现**）
@@ -297,7 +298,7 @@ X 轴/聚合规则：
 - `backend/auth.py`（中间件，三档权限）：
   - 公开：`/api/health`、`/api/meta`、`/api/auth/status`、`POST /api/auth/login|register`；
     以及 **带 `?ticket=` 的 `GET /api/exports/{id}/download`**（手机端交给外部浏览器，没有登录 Cookie，
-    票由 `api/export.py` 自己核销：2 分钟、一次、绑导出 id）；
+    票由 `api/export.py` 自己核验：15 分钟内有效、可重复下、绑导出 id）；
   - 登录即可（`needs_login`）：`/api/catalog`、`/api/export(s)`、`/api/scores*`、`/api/auth/me|logout`，
     以及 **GET** `/api/questions*`（列表/详情/题目图）；
   - 其余 `/api/*`：管理员。管理员 = `users.is_admin`（由 `.env` 的 `ZC_ADMIN_USERS` 播种），或 `X-Admin-Key` 兜底。
@@ -318,16 +319,26 @@ X 轴/聚合规则：
   用户会遇到「服务端改了、App 里没变」（后端也加了 no-cache + 资源版本戳，这里是第二层保险）。
 - **登录态走 Cookie**：显式开 `CookieManager.setAcceptCookie` / `setAcceptThirdPartyCookies`，
   并在 `onPause()` 里 `flush()` 落盘，下次打开还是登录态。
-- **导出 Word 交给系统浏览器下载**（v1.2）：页面在壳里下载时先用登录态换一张**一次性票**
-  （`POST /api/exports/{id}/ticket`，2 分钟、用完即废），再跳转到 `/download?ticket=...`；
-  壳拦到这个 URL 就 `Intent.ACTION_VIEW` 丢给浏览器（浏览器会存到「下载」目录，下完能直接选 WPS/Word 打开）。
+- **导出 Word 走「15 分钟临时链接 + 复制」**（v1.3）：手机端下载一直不稳（WebView 拦下载、
+  DownloadManager 拿不到 WebView 的登录 Cookie、外部浏览器又没有登录态），所以：
+  1. 页面 `POST /api/exports/{id}/ticket` 换一条 **15 分钟有效、可重复下载**的临时链接；
+  2. 顺手 `location.href = 该链接`，壳拦到就 `Intent.ACTION_VIEW` 丢给浏览器（下到「下载」目录，点开选 WPS/Word）；
+  3. 同时弹 `#dlPanel`「复制链接」面板：点「复制链接」走原生桥 `window.ZCAndroid.copy`
+     （http 下 `navigator.clipboard` 不可用，`execCommand` 在部分 WebView 也不灵），
+     粘到浏览器地址栏、甚至发到电脑都能下。
+  **只在安卓壳里这样**（`web/core.js` 的 `needCopyPanel()` 判 UA 里的 `ZCWrongBook`），
+  **web 端（桌面/手机浏览器）行为不变**，仍是 `<a download>` 直接下；
+  想让手机浏览器也走复制链接，把 `needCopyPanel()` 改成 `isMobile()` 即可。
   **为什么不用 DownloadManager**：它是系统进程，拿不到 WebView 的登录 Cookie，之前会下到一份 401 的 JSON；
   现在是没装浏览器时才退回 DownloadManager，并且会补上 `Cookie` 头。
+- `MainActivity` 里的 `ClipboardBridge`（`@JavascriptInterface`，注册名 `ZCAndroid`）只提供 `copy(String)`，
+  必须 `runOnUiThread` 里操作剪贴板并弹 Toast。
 - 顺带支持管理后台上传：实现 `onShowFileChooser` 选 PDF。
 - `AndroidManifest.xml` 必须 `android:usesCleartextTraffic="true"`（局域网 http）。
 - 打包**不用 Gradle**：`android/fetch_sdk.py` 拉最小 SDK，`android/build_apk.py` 走
   aapt2 compile/link → javac → jar → d8 → 自写 zip（`resources.arsc` 保持不压缩）→ zipalign → apksigner。
-  产物 `android/dist/408错题本-1.2.apk`。
+  产物 `android/dist/408错题本-1.3.apk`（版本号在 `build_apk.py` 的 `VERSION_CODE/VERSION_NAME`
+  和 `AndroidManifest.xml` 里，**两处都要改**）。
 
 ### 7.11 `backend/services/paper_structure.py` —— 每份试卷自己的卷面结构（v0.2 追加）
 
@@ -430,7 +441,7 @@ npm run build      # 产物 admin/dist，后端重启后由 /admin/ 托管
 ### 安卓端（可选，改动了 android/ 才需要）
 ```powershell
 .\.venv\Scripts\python.exe android\fetch_sdk.py    # 首次：platform + build-tools + R8，约 130MB
-.\.venv\Scripts\python.exe android\build_apk.py    # 产物 android/dist/408错题本-1.2.apk
+.\.venv\Scripts\python.exe android\build_apk.py    # 产物 android/dist/408错题本-1.3.apk
 ```
 
 ### Docker（部署到服务器，本机 Windows 上也能跑）
@@ -544,10 +555,15 @@ node --check web\scores.js                           # 前端改动后至少过�
   生成的 docx 只作为「下载凭据」留在 `exports` 表里，`api/export.py` 每次导出后 `_prune_exports()`
   只保留最近 `KEEP_EXPORTS`（30）条并把更老的磁盘文件一起删掉；表里新加了 `user_id`，
   下载/发票都要核对归属（老数据 user_id 为 NULL，谁登录谁能下）。
-- **手机端下载要用「一次性票」**：安卓壳把下载交给系统浏览器，浏览器里没有 WebView 的登录 Cookie，
-  直接开 `/api/exports/{id}/download` 会 401。所以页面先 `POST .../ticket` 拿票再跳转；
+- **手机端下载用「15 分钟临时链接」**（v1.3 起从「一次性票」改的）：安卓壳把下载交给系统浏览器，
+  浏览器里没有 WebView 的登录 Cookie，直接开 `/api/exports/{id}/download` 会 401，
+  所以页面先 `POST .../ticket` 换一条带票的链接。
+  **票是可重复用的**（`DOWNLOAD_TICKET_TTL = 900`，`api/export.py` 的 `_check_ticket()` 只校验不核销）：
+  手机上会先用系统浏览器开一次、再点「复制链接」粘一次，一次性票在这种用法下必然失败——
+  第一版就是 2 分钟一次性，被"还是下载不了"反复打回。
   票存在进程内存里（`api/export.py` 的 `_download_tickets`），重启即失效——只在单进程下有效，
-  以后真要多进程就得挪到库里。`tests/http_smoke.py` 的 7.5 段覆盖「票能下 / 票只能用一次 / 没票 401」。
+  以后真要多进程就得挪到库里。`tests/http_smoke.py` 的 7.5 段覆盖
+  「能下 / 有效期内可重复下 / 再换一条是新的 / 瞎编的票 401 / 没票且没登录 401」。
 - **别用 PowerShell 读写 UTF-8 源码**：PS 5.1 的 `Get-Content -Raw` 按 GBK 解码、`Set-Content -Encoding UTF8` 再编码，
   会把中文注释变成乱码（甚至 `SyntaxError: invalid character '＄'`），而且**不可逆**（GBK 解不出的字节变成 U+FFFD）。
   更阴的是 `(Get-Content x) -replace ... | Set-Content x -NoNewline`：**会把整个文件拼成一行**
@@ -579,7 +595,10 @@ node --check web\scores.js                           # 前端改动后至少过�
   断言登录门、Tab 切换、录入表单展开。**改前端交互后必须跑它**；把 `initTabs()` 注释掉会立刻 6 条 FAIL。
 - 迷你 DOM 只实现 `#id` / `.class` 选择器和用到的那批 API；前端若用了新的 DOM API
   （如 `createDocumentFragment`、`insertAdjacentHTML`、`el.id`），要在测试脚手架里补上，否则会"因为脚手架缺失"而失败。
-- 用户端关键入口（登录门 → 得分 Tab → 「录入成绩」）都在这个测试里断言过，别再漏。
+  **`URL` / `location.origin` 也踩过**：`vm.createContext()` 里没有 `URL`（它不是 ECMAScript 内建），
+  `location` 也只是个裸对象——`core.js` 换临时下载链接时 `new URL(url, location.origin)` 会直接抛错，
+  表现为「票要到了、但 location.href 没变」这种莫名其妙的 FAIL。脚手架里补上 `URL` 和 `origin` 即可。
+- 用户端关键入口（登录门 → 得分 Tab → 「录入成绩」→ 生成 Word）都在这个测试里断言过，别再漏。
 - **录入表单的「实时总分」曾经只加了客观题**（`compute()` 漏了遍历主观题输入框），主观题白填；
   保存后后端算的分一直是对的，只有表单上那个数字少了一截（用户就是这么发现的）。
   现在 `web_dom_smoke.js` 第 4c 段会填满表单并断言「客观题 35/35 + 主观题 12/12 = 总分 47/47」

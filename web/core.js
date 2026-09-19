@@ -51,22 +51,98 @@ window.ZC = (() => {
     toast._timer = setTimeout(() => node.classList.add("hidden"), 2800);
   }
 
-  /* 安卓壳（MainActivity 往 UA 里加了 ZCWrongBook/1.0）：它会把下载链接交给系统浏览器，
-     而浏览器里没有 WebView 的登录 Cookie，所以要先用登录态换一张一次性票再跳转。 */
+  /* 安卓壳（MainActivity 往 UA 里加了 ZCWrongBook/1.0）或手机浏览器：
+     它们的「下载」最不靠谱（WebView 拦下载、手机浏览器没反应、外部浏览器又没有登录 Cookie），
+     所以干脆跟后端要一条 15 分钟的临时链接，弹面板让用户复制 / 用浏览器打开。 */
   function isAndroidShell() {
     return typeof navigator !== "undefined" && /ZCWrongBook/.test(navigator.userAgent || "");
   }
 
-  function download(url) {
-    if (isAndroidShell() && url.includes("/download")) {
-      const ticketUrl = url.replace(/\/download(\?.*)?$/, "/ticket");
-      fetch(ticketUrl, { method: "POST", credentials: "same-origin" })
-        .then((res) => (res.ok ? res.json() : Promise.reject(new Error("取下载票失败"))))
-        .then((data) => {
-          // 跳到带票的下载地址：壳会拦截这个 URL，用系统浏览器打开
-          location.href = data.url;
-        })
-        .catch(() => toast("下载失败：登录态可能过期，重新登录后再试", true));
+  function isMobile() {
+    return isAndroidShell() || (typeof navigator !== "undefined" && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || ""));
+  }
+
+  /** 复制文本：安全上下文用 clipboard API，安卓壳走原生桥，再退回 execCommand。 */
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext !== false) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (_) {
+      /* 落下去走别的办法 */
+    }
+    try {
+      if (window.ZCAndroid && typeof window.ZCAndroid.copy === "function") {
+        window.ZCAndroid.copy(text);
+        return true;
+      }
+    } catch (_) {
+      /* 没有原生桥就算了 */
+    }
+    try {
+      const box = document.createElement("textarea");
+      box.value = text;
+      box.setAttribute("readonly", "readonly");
+      box.style.position = "fixed";
+      box.style.opacity = "0";
+      document.body.appendChild(box);
+      box.select();
+      const ok = document.execCommand("copy");
+      box.remove();
+      return Boolean(ok);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /** 弹出下载链接面板（URL 已选中，方便长按复制） */
+  function showDownloadPanel(url, hint) {
+    const panel = $("#dlPanel");
+    const input = $("#dlUrl");
+    if (!panel || !input) {
+      toast("下载链接：" + url);
+      return;
+    }
+    input.value = url;
+    if (hint) $("#dlHint").textContent = hint;
+    panel.classList.remove("hidden");
+    try {
+      input.focus();
+      input.select();
+    } catch (_) {
+      /* 有的 WebView 不让脚本选中，问题不大 */
+    }
+  }
+
+  function hideDownloadPanel() {
+    const panel = $("#dlPanel");
+    if (panel) panel.classList.add("hidden");
+  }
+
+  /** 用登录态换一条 15 分钟的临时下载链接 */
+  async function tempDownloadUrl(downloadUrl) {
+    const ticketUrl = downloadUrl.replace(/\/download(\?.*)?$/, "/ticket");
+    const data = await api(ticketUrl, { method: "POST" });
+    return new URL(data.url, location.origin || window.location.href).href;
+  }
+
+  /** 弹面板的时机：**只认安卓壳**（web 端行为保持原样：桌面 / 手机浏览器都还是直接下载）。
+      如果以后想让手机浏览器也走「复制链接」，把这里换成 isMobile() 即可。 */
+  function needCopyPanel() {
+    return isAndroidShell();
+  }
+
+  async function download(url) {
+    if (needCopyPanel() && url.includes("/download")) {
+      try {
+        const temp = await tempDownloadUrl(url);
+        showDownloadPanel(temp);
+        // 能直接交给外部浏览器就顺手打开一次（安卓壳会拦这个 URL 用系统浏览器打开）
+        location.href = temp;
+      } catch (err) {
+        toast(`取下载链接失败：${err.message}`, true);
+      }
       return;
     }
     const a = document.createElement("a");
@@ -75,6 +151,24 @@ window.ZC = (() => {
     document.body.appendChild(a);
     a.click();
     a.remove();
+  }
+
+  /** 面板上的两个按钮（core.js 启动时调一次） */
+  function initDownloadPanel() {
+    const copyBtn = $("#dlCopy");
+    const openBtn = $("#dlOpen");
+    const closeBtn = $("#dlClose");
+    if (copyBtn) {
+      copyBtn.onclick = async () => {
+        const url = $("#dlUrl").value;
+        const ok = await copyText(url);
+        $("#dlHint").textContent = ok
+          ? "已复制：粘到浏览器地址栏回车就能下载（15 分钟内有效）。"
+          : "复制失败：长按上面的输入框手动全选复制（15 分钟内有效）。";
+      };
+    }
+    if (openBtn) openBtn.onclick = () => { location.href = $("#dlUrl").value; };
+    if (closeBtn) closeBtn.onclick = hideDownloadPanel;
   }
 
   /** 极简 DOM 构造：el("div", {class:"x"}, ["文本", node]) */
@@ -220,7 +314,8 @@ window.ZC = (() => {
   }
 
   function wireGate() {
-    initTabs(); // 三个 Tab 的点击绑定（漏了这行会导致点 Tab 没反应）
+    initTabs(); // Tab 的点击绑定（漏了这行会导致点 Tab 没反应）
+    initDownloadPanel(); // 手机端「复制下载链接」面板的按钮
     $("#authTabLogin").onclick = () => setAuthMode("login");
     $("#authTabRegister").onclick = () => setAuthMode("register");
     $("#authSubmit").onclick = submitAuth;

@@ -46,7 +46,7 @@
 │   ├── api/
 │   │   ├── papers.py         # 上传 / 列表 / 详情 / 页面图 / 重识别 / 删除 / **卷面结构(读改重建)**
 │   │   ├── questions.py      # 人工校正：改边界(自动重裁) / 合并 / 拆分 / 整卷重裁
-│   │   ├── export.py         # 生成 Word / 下载（一次性票）；**没有导出记录列表**
+│   │   ├── export.py         # 生成 Word / 下载（15 分钟临时票）；**没有导出记录列表**
 │   │   ├── auth.py           # 注册 / 登录 / 登出 / me / 注册开关状态
 │   │   ├── scores.py         # 得分录入 / 列表 / 编辑 / 删除 / 趋势 / 表单结构
 │   │   └── admin.py          # 管理员：校验密钥、注册开关、用户管理
@@ -73,7 +73,7 @@
 │   ├── app/AndroidManifest.xml, app/res/, app/java/com/zc/wrongbook/MainActivity.java
 │   ├── fetch_sdk.py          # 下载最小 Android SDK（platform + build-tools + R8）
 │   ├── build_apk.py          # 手工流水线打 APK（aapt2 → javac → d8 → zipalign → apksigner）
-│   └── dist/408错题本-1.2.apk
+│   └── dist/408错题本-1.3.apk
 ├── data/                     # 运行期数据（uploads/pages/crops/exports/db.sqlite）
 ├── tests/
 │   ├── test_ocr_crop.py      # 题号正则 / 过滤 / 墨迹检测 / 卷面结构
@@ -204,7 +204,7 @@ cd admin; npm install --registry=https://registry.npmmirror.com; npm run dev   #
 
 | 档位 | 范围 | 凭证 |
 |---|---|---|
-| 公开 | `/api/health`、`/api/meta`、`/api/auth/status`、登录/注册，以及**带 `?ticket=` 的导出下载**（手机端交给外部浏览器时没有登录 Cookie，票 2 分钟一次有效） | 无 |
+| 公开 | `/api/health`、`/api/meta`、`/api/auth/status`、登录/注册，以及**带 `?ticket=` 的导出下载**（手机端交给外部浏览器时没有登录 Cookie，票 15 分钟内可重复用） | 无 |
 | **登录即可** | 题目列表/详情/题目图（GET）、`/api/catalog`、生成 Word（`POST /api/export`）、下载/换票（`/api/exports/{id}/...`）、`/api/scores*`、`/api/auth/me|logout` | 会话 Cookie **或** `Authorization: Bearer <token>` |
 | 管理员 | 其余全部 `/api/*`：上传真题、切题校正（改/删题目）、重裁、删除真题、用户管理 | 管理员账号的登录态（`is_admin`），或 `X-Admin-Key` 兜底 |
 
@@ -229,7 +229,7 @@ cd admin; npm install --registry=https://registry.npmmirror.com; npm run dev   #
 
 ## 9. 安卓端
 
-现成安装包：**`android/dist/408错题本-1.2.apk`**（约 31KB，minSdk 24 / targetSdk 34，
+现成安装包：**`android/dist/408错题本-1.3.apk`**（约 29KB，minSdk 24 / targetSdk 34，
 debug 签名）。传到手机点击安装（需允许「安装未知来源应用」）。
 
 - 它是个 WebView 壳，界面就是 `web/` 那份 H5，所以登录、得分趋势、错题勾选都能用；
@@ -237,10 +237,19 @@ debug 签名）。传到手机点击安装（需允许「安装未知来源应�
 - 顶部「刷新」会**先清掉 WebView 缓存再加载**：前端是无构建的，改完 `web/` 点它就一定拿到新页面
   （后端也给静态资源加了 `no-cache` + 版本戳，双保险）；
 - 登录态用 Cookie 存在 WebView 里（已显式打开 `CookieManager` 并落盘），下次打开不用重新登录；
-- 导出 Word **交给系统浏览器下载**（v1.2 起）：页面先用登录态换一张**一次性票**，再用外部浏览器打开
-  `/api/exports/{id}/download?ticket=...`，下到「下载」目录，点开就能选 WPS/Word。
-  票 2 分钟有效、只能用一次，所以浏览器里没有登录 Cookie 也能下；
+- 导出 Word 走**临时下载链接**（v1.3 起）。手机端下载一直是老大难（WebView 拦下载、系统下载器拿不到
+  WebView 的登录 Cookie、外部浏览器又没有登录态），所以改成：
+  1. 点「生成 Word」后，页面用登录态 `POST /api/exports/{id}/ticket` 换一条 **15 分钟有效的临时链接**
+     （`/api/exports/{id}/download?ticket=...`）；
+  2. 顺手把这条链接丢给系统浏览器打开（壳拦到这个 URL 就 `ACTION_VIEW`，浏览器下到「下载」目录，点开选 WPS/Word）；
+  3. 同时弹一个**「复制链接」面板**：浏览器没起来 / 下不动时，点「复制链接」把 URL 拷到剪贴板
+     （走原生桥 `window.ZCAndroid.copy`，http 下 `navigator.clipboard` 用不了），
+     粘到任意浏览器地址栏、甚至发到电脑上都能下。
+  临时链接在 15 分钟内**可重复下载**（会重试、会先在壳里点一次再复制），到期自动失效；
   没装浏览器时才退回系统下载器（会补上登录 Cookie）。
+- **web 端行为不变**：桌面浏览器和手机浏览器仍然是老的 `<a download>` 直接下载，
+  只有安卓壳（UA 带 `ZCWrongBook`）才走上面这套。想让手机浏览器也走复制链接，
+  把 `web/core.js` 的 `needCopyPanel()` 从 `isAndroidShell()` 改成 `isMobile()` 即可。
 
 改完代码想重新打包：
 

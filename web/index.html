@@ -104,6 +104,20 @@
 
 <div id="toast" class="toast hidden"></div>
 
+<!-- 下载链接面板：手机端（WebView / 手机浏览器）下载最不靠谱，干脆把临时链接给你复制 -->
+<div id="dlPanel" class="dl-panel hidden">
+  <div class="dl-head">
+    <strong>下载链接（15 分钟内有效）</strong>
+    <button id="dlClose" class="btn tiny ghost">关闭</button>
+  </div>
+  <input id="dlUrl" class="input dl-url" readonly />
+  <div class="dl-actions">
+    <button id="dlCopy" class="btn primary">复制链接</button>
+    <button id="dlOpen" class="btn">直接用浏览器打开</button>
+  </div>
+  <p class="hint" id="dlHint">复制后粘到任意浏览器地址栏就能下载（手机上没有下载动作时，把链接发到电脑上也行）。</p>
+</div>
+
 <script src="/core.js"></script>
 <script src="/chart.js"></script>
 <script src="/app.js"></script>

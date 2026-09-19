@@ -41,8 +41,9 @@ import android.widget.Toast;
  * 相比"再写一套原生界面"，这样最省事也最不容易走样：
  * <ul>
  *   <li>服务器地址可在 App 内配置（存 SharedPreferences，不用重新打包）；</li>
- *   <li>导出 Word：交给系统浏览器下载（页面先换一张一次性票，浏览器没有登录 Cookie 也能下），
- *       没装浏览器就退回系统 DownloadManager（带上 Cookie 头）；</li>
+ *   <li>导出 Word：页面会用登录态换一条**15 分钟有效的临时下载链接**并弹面板，可「复制链接」或
+ *       「用浏览器打开」；壳拦到下载 URL 就用系统浏览器打开。复制走原生剪贴板（window.ZCAndroid.copy），
+ *       因为 http 下浏览器剪贴板 API 不可用；没装浏览器时才退回系统 DownloadManager（带上 Cookie 头）；</li>
  *   <li>管理后台也能在这个 WebView 里用（支持 &lt;input type=file&gt; 选 PDF）；</li>
  *   <li>不依赖 androidx / Gradle，只用系统 API，便于手工打包成 APK。</li>
  * </ul>
@@ -162,6 +163,26 @@ public class MainActivity extends Activity {
         web.reload();
     }
 
+    /** 给网页用的剪贴板桥（window.ZCAndroid.copy）。必须跑在主线程上弹 Toast。 */
+    private class ClipboardBridge {
+        @android.webkit.JavascriptInterface
+        public void copy(final String text) {
+            if (text == null || text.isEmpty()) {
+                return;
+            }
+            runOnUiThread(() -> {
+                try {
+                    android.content.ClipboardManager manager =
+                            (android.content.ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    manager.setPrimaryClip(android.content.ClipData.newPlainText("408错题本下载链接", text));
+                    Toast.makeText(MainActivity.this, "下载链接已复制，粘到浏览器就能下载", Toast.LENGTH_LONG).show();
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, "复制失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            });
+        }
+    }
+
     private void configureWebView() {
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -183,6 +204,11 @@ public class MainActivity extends Activity {
         CookieManager cookies = CookieManager.getInstance();
         cookies.setAcceptCookie(true);
         cookies.setAcceptThirdPartyCookies(web, true);
+
+        // 页面用它把「临时下载链接」写进系统剪贴板：
+        // http 下 navigator.clipboard 用不了（不是安全上下文），execCommand 在部分 WebView 也不灵，
+        // 原生 ClipboardManager 最稳。JS 里叫 window.ZCAndroid.copy(text)。
+        web.addJavascriptInterface(new ClipboardBridge(), "ZCAndroid");
 
         web.setWebViewClient(new WebViewClient() {
             @Override

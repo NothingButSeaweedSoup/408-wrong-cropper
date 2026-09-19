@@ -263,7 +263,7 @@ function makeFetch(state) {
       }
       if (/^\/api\/exports\/\d+\/ticket$/.test(pathOnly)) {
         const id = pathOnly.split("/")[3];
-        return json({ url: `/api/exports/${id}/download?ticket=FAKE-TICKET`, expires_in: 120 });
+        return json({ url: `/api/exports/${id}/download?ticket=FAKE-TICKET`, expires_in: 900 });
       }
       return json({ detail: `未在假 fetch 里实现: ${method} ${pathOnly}` }, 404);
     },
@@ -343,7 +343,9 @@ async function main() {
     FormData: class FormData {}, // api() 里会做 instanceof FormData 判断
     confirm: () => true,
     alert: () => {},
-    location: { href: "", reload: () => {} },
+    // 迷你 DOM 里没有真的 location / URL：core.js 换临时下载链接时要用它们拼绝对地址
+    location: { href: "http://127.0.0.1:18100/", origin: "http://127.0.0.1:18100", reload: () => {} },
+    URL,
     // 默认当普通浏览器；测安卓壳的下载流程时再改成 "... ZCWrongBook/1.0"
     navigator: { userAgent: "Mozilla/5.0 (Windows NT 10.0) Chrome/120" },
     CustomEvent: class CustomEvent {
@@ -522,17 +524,31 @@ async function main() {
         fake.calls.slice(callsBefore).join(" | "));
   check("普通浏览器直接下载（不换票）",
         !fake.calls.slice(callsBefore).some((c) => c.includes("/ticket")), fake.calls.slice(callsBefore).join(" | "));
+  check("普通浏览器不弹「复制链接」面板（web 端行为不变）",
+        byId.dlPanel.classList.contains("hidden"), byId.dlPanel.className);
 
-  console.log("\n5b) 安卓壳里生成完：先换一次性票，再交给系统浏览器");
+  console.log("\n5b) 安卓壳里生成完：换 15 分钟临时链接 + 弹「复制链接」面板");
   sandbox.navigator.userAgent = "Mozilla/5.0 (Linux; Android 14) ZCWrongBook/1.0";
-  sandbox.location.href = "";
+  sandbox.location.href = "http://127.0.0.1:18100/";
+  let copied = null;
+  sandbox.ZCAndroid = { copy: (text) => { copied = text; } }; // 原生剪贴板桥
   byId.exportBtn.click();
   await tick();
   await tick();
-  check("壳里先要了一次性票", fake.calls.slice(callsBefore).includes("POST /api/exports/1/ticket"),
+  check("壳里先要了一条临时下载链接", fake.calls.slice(callsBefore).includes("POST /api/exports/1/ticket"),
         fake.calls.slice(callsBefore).join(" | "));
-  check("跳到带票的下载地址（壳会交给系统浏览器）",
+  check("临时链接是带票的绝对地址", byId.dlUrl.value === "http://127.0.0.1:18100/api/exports/1/download?ticket=FAKE-TICKET",
+        byId.dlUrl.value);
+  check("弹出了「复制链接」面板", !byId.dlPanel.classList.contains("hidden"), byId.dlPanel.className);
+  check("顺手跳到该链接（壳会交给系统浏览器）",
         String(sandbox.location.href).includes("/api/exports/1/download?ticket="), String(sandbox.location.href));
+  byId.dlCopy.click();
+  await tick();
+  await tick();
+  check("点「复制链接」走原生剪贴板桥", copied === byId.dlUrl.value, String(copied));
+  check("复制后提示 15 分钟有效", String(byId.dlHint.textContent).includes("15 分钟"), byId.dlHint.textContent);
+  byId.dlClose.click();
+  check("「关闭」能收起面板", byId.dlPanel.classList.contains("hidden"), byId.dlPanel.className);
 
   console.log("\n6) 切回「选错题」Tab");
   byClass.tab.find((t) => t.dataset.view === "pick").click();

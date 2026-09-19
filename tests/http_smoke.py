@@ -418,7 +418,9 @@ def main() -> int:
         "question_ids": [q["id"] for q in detail["questions"]],
         "with_caption": True, "note_lines": 1, "image_width_cm": 16,
     })
-    check("文件名格式正确", bool(re.match(r"^408错题本_\d{4}-\d{2}-\d{2}_\d{4}\.docx$", export["filename"])),
+    # 同一分钟内重复导出时后端会给文件名加 _2 后缀（别把上一份覆盖掉），断言要容忍它
+    check("文件名格式正确",
+          bool(re.match(r"^408错题本_\d{4}-\d{2}-\d{2}_\d{4}(_\d+)?\.docx$", export["filename"])),
           export["filename"])
     check("题目数 = 5", export["question_count"] == 5, str(export["question_count"]))
     status, _h, blob = call("GET", export["download_url"], binary=True, key="", token=user_token)
@@ -443,16 +445,26 @@ def main() -> int:
     except urllib.error.HTTPError as exc:
         check("删除导出记录接口也去掉了", exc.code in (404, 405), str(exc.code))
 
-    print("\n7.5) 手机端下载：一次性票（外部浏览器没有登录 Cookie）")
+    print("\n7.5) 手机端下载：15 分钟临时链接（外部浏览器没有登录 Cookie）")
     ticket = call("POST", f"/api/exports/{export_id}/ticket", key="", token=user_token)
-    check("登录态能换到下载票", "ticket=" in ticket["url"] and ticket["expires_in"] > 0, ticket["url"])
+    check("登录态能换到临时下载链接", "ticket=" in ticket["url"] and ticket["expires_in"] == 900,
+          f'{ticket["url"]} expires_in={ticket["expires_in"]}')
     status, _h, blob2 = call("GET", ticket["url"], binary=True, key="")  # 不带 token / 不带 Cookie
-    check("拿着票、不带登录态也能下到 docx", status == 200 and len(blob2) > 5000, f"{round(len(blob2)/1024)} KB")
+    check("拿着临时链接、不带登录态也能下到 docx", status == 200 and len(blob2) > 5000,
+          f"{round(len(blob2)/1024)} KB")
+    # 15 分钟内可重复下：手机浏览器/外部浏览器重试、或用户先点「复制链接」再粘到浏览器，都不该失效
+    status, _h, blob3 = call("GET", ticket["url"], binary=True, key="")
+    check("临时链接在有效期内可重复下载", status == 200 and len(blob3) > 5000,
+          f"{round(len(blob3)/1024)} KB")
+    other = call("POST", f"/api/exports/{export_id}/ticket", key="", token=user_token)
+    check("再换一条是新的（不复用旧链接）", other["url"] != ticket["url"], "两条不同")
+    status, _h, _b = call("GET", ticket["url"], binary=True, key="")
+    check("旧链接在新链接签发后仍然有效（同一 15 分钟窗口）", status == 200, str(status))
     try:
-        call("GET", ticket["url"], binary=True, key="")
-        check("票是一次性的（第二次就失效）", False, "居然还能下")
+        call("GET", f"/api/exports/{export_id}/download?ticket=deadbeef", binary=True, key="")
+        check("瞎编的票 -> 401", False, "居然能下")
     except urllib.error.HTTPError as exc:
-        check("票是一次性的（第二次就失效）", exc.code == 401, str(exc.code))
+        check("瞎编的票 -> 401", exc.code == 401, str(exc.code))
     try:
         call("GET", export["download_url"], binary=True, key="")
         check("没有票、又没有登录态 -> 401", False, "居然能下")

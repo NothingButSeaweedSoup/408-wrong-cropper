@@ -25,10 +25,9 @@ router = APIRouter(prefix="/api", tags=["export"])
 # 磁盘上最多留多少份导出的 Word（超出就把最老的删掉：页面没有删除入口了，得自己看着点）
 KEEP_EXPORTS = 30
 
-# 一次性下载票：手机端把 Word 交给**系统浏览器**下载时，浏览器里没有 WebView 的登录 Cookie，
-# 直接开 /download 会 401；把会话 token 塞进 URL 又会留在浏览器历史里。
-# 所以先用登录态换一张 2 分钟、只能用一次的票，再用票去下载。
-DOWNLOAD_TICKET_TTL = 120.0
+# 临时下载链接：手机端把 URL 复制出来、粘到浏览器里下载（WebView 里的下载最不靠谱的一环）。
+# 15 分钟有效，**窗口内可重复访问**——用户可能第一次点失败、或者粘到另一台设备上再下一次。
+DOWNLOAD_TICKET_TTL = 900.0
 _download_tickets: dict[str, tuple[int, float]] = {}  # ticket -> (export_id, 过期时间戳)
 
 
@@ -37,11 +36,11 @@ def _purge_tickets(now: float) -> None:
         _download_tickets.pop(key, None)
 
 
-def _take_ticket(ticket: str, export_id: int) -> None:
-    """核销一张票（一次性的，用完即删）。"""
-    entry = _download_tickets.pop(ticket, None)
+def _check_ticket(ticket: str, export_id: int) -> None:
+    """校验票（不消耗：15 分钟内可以重复下载同一份）。"""
+    entry = _download_tickets.get(ticket)
     if entry is None or entry[0] != export_id or entry[1] < time.time():
-        raise HTTPException(401, "下载链接已失效，请回页面重新点一次下载")
+        raise HTTPException(401, "下载链接已失效（15 分钟），请回页面重新点一次导出")
 
 
 def _owner_id(request: Request) -> int | None:
@@ -181,7 +180,12 @@ def export_docx(req: ExportRequest, request: Request):
 
 @router.post("/exports/{export_id}/ticket")
 def export_ticket(export_id: int, request: Request):
-    """发一张一次性下载票，给手机端交给系统浏览器下载用（登录态必需）。"""
+    """发一张临时下载链接（默认 15 分钟）：手机端复制出来粘到浏览器里下载用。
+
+    为什么要票：外部浏览器没有 WebView 的登录 Cookie，直接开 `/download` 会 401；
+    把会话 token 塞进 URL 又会留在浏览器历史里。票绑在导出 id 上、只认这个文件，
+    过期自动作废（存在进程内存里，重启即失效）。
+    """
     with db.get_conn() as conn:
         row = conn.execute("SELECT id, user_id FROM exports WHERE id=?", (export_id,)).fetchone()
     if row is None:
@@ -198,7 +202,7 @@ def export_ticket(export_id: int, request: Request):
 def download_export(export_id: int, request: Request, ticket: str | None = None):
     if ticket:
         # 拿票下载时没有登录态（外部浏览器），归属在发票那一步已经核对过了
-        _take_ticket(ticket, export_id)
+        _check_ticket(ticket, export_id)
     with db.get_conn() as conn:
         row = conn.execute("SELECT * FROM exports WHERE id=?", (export_id,)).fetchone()
     if row is None:
