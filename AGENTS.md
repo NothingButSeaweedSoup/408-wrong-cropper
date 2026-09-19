@@ -164,7 +164,7 @@
 │   ├── app/{AndroidManifest.xml, res/, java/com/zc/wrongbook/MainActivity.java}
 │   ├── fetch_sdk.py          # 下载最小 SDK（platform + build-tools + R8）
 │   ├── build_apk.py          # aapt2 → javac → d8 → zipalign → apksigner
-│   └── dist/408错题本-1.0.apk
+│   └── dist/408错题本-1.1.apk
 └── tests/
     ├── test_ocr_crop.py      # 题号正则 / 过滤 / 墨迹检测 / 卷面结构
     ├── test_layout.py        # 换页与拆分规则
@@ -297,6 +297,8 @@ X 轴/聚合规则：
 - 一个 `MainActivity`（Java，**零 androidx**）：顶部栏（标题/服务器/刷新）+ 进度条 + WebView + 错误横幅，
   界面全部代码搭，只有 `strings.xml` 一个资源。
 - 服务器地址存 `SharedPreferences`，首次启动弹框让用户填；连不上时横幅提示并可重填。
+- 顶部「刷新」= `web.clearCache(true)` + `reload()`：前端是无构建的，直接 reload 时 WebView 可能还吃旧缓存，
+  用户会遇到「服务端改了、App 里没变」（后端也加了 no-cache + 资源版本戳，这里是第二层保险）。
 - **登录态走 Cookie**：显式开 `CookieManager.setAcceptCookie` / `setAcceptThirdPartyCookies`，
   并在 `onPause()` 里 `flush()` 落盘，下次打开还是登录态。
 - 导出 Word：拦截 `/api/exports/*/download` 与 WebView 的 `DownloadListener`，交给系统 `DownloadManager`
@@ -305,7 +307,7 @@ X 轴/聚合规则：
 - `AndroidManifest.xml` 必须 `android:usesCleartextTraffic="true"`（局域网 http）。
 - 打包**不用 Gradle**：`android/fetch_sdk.py` 拉最小 SDK，`android/build_apk.py` 走
   aapt2 compile/link → javac → jar → d8 → 自写 zip（`resources.arsc` 保持不压缩）→ zipalign → apksigner。
-  产物 `android/dist/408错题本-1.0.apk`。
+  产物 `android/dist/408错题本-1.1.apk`。
 
 ### 7.11 `backend/services/paper_structure.py` —— 每份试卷自己的卷面结构（v0.2 追加）
 
@@ -386,7 +388,7 @@ npm run build      # 产物 admin/dist，后端重启后由 /admin/ 托管
 ### 安卓端（可选，改动了 android/ 才需要）
 ```powershell
 .\.venv\Scripts\python.exe android\fetch_sdk.py    # 首次：platform + build-tools + R8，约 130MB
-.\.venv\Scripts\python.exe android\build_apk.py    # 产物 android/dist/408错题本-1.0.apk
+.\.venv\Scripts\python.exe android\build_apk.py    # 产物 android/dist/408错题本-1.1.apk
 ```
 
 ### 测试

@@ -72,7 +72,7 @@
 │   ├── app/AndroidManifest.xml, app/res/, app/java/com/zc/wrongbook/MainActivity.java
 │   ├── fetch_sdk.py          # 下载最小 Android SDK（platform + build-tools + R8）
 │   ├── build_apk.py          # 手工流水线打 APK（aapt2 → javac → d8 → zipalign → apksigner）
-│   └── dist/408错题本-1.0.apk
+│   └── dist/408错题本-1.1.apk
 ├── data/                     # 运行期数据（uploads/pages/crops/exports/db.sqlite）
 ├── tests/
 │   ├── test_ocr_crop.py      # 题号正则 / 过滤 / 墨迹检测 / 卷面结构
@@ -217,7 +217,7 @@ cd admin; npm install --registry=https://registry.npmmirror.com; npm run dev   #
 
 ## 9. 安卓端
 
-现成安装包：**`android/dist/408错题本-1.0.apk`**（约 31KB，minSdk 24 / targetSdk 34，
+现成安装包：**`android/dist/408错题本-1.1.apk`**（约 31KB，minSdk 24 / targetSdk 34，
 debug 签名）。传到手机点击安装（需允许「安装未知来源应用」）。
 
 - 它是个 WebView 壳，界面就是 `web/` 那份 H5，所以登录、得分趋势、错题勾选都能用；

@@ -245,11 +245,12 @@ select.input {
 /* ---------------------------------------------------------------- 当前水平估计（小表格） */
 .estimate { margin: 4px 0 12px; }
 .estimate-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
-.estimate-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+/* 得分趋势里那张小表：整体按原来的 ~70% 缩放（字号 13→9，内边距 6/8→4/6，色块 8→6） */
+.estimate-table { width: 100%; border-collapse: collapse; font-size: 9px; }
 .estimate-table th,
-.estimate-table td { padding: 6px 8px; text-align: center; border-bottom: 1px solid var(--line); }
-.estimate-table th { font-weight: 600; color: var(--muted); font-size: 12px; white-space: nowrap; }
-.estimate-table th i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 4px; }
+.estimate-table td { padding: 4px 6px; text-align: center; border-bottom: 1px solid var(--line); }
+.estimate-table th { font-weight: 600; color: var(--muted); font-size: 9px; white-space: nowrap; }
+.estimate-table th i { width: 6px; height: 6px; border-radius: 2px; display: inline-block; margin-right: 3px; }
 .estimate-table td { font-weight: 600; font-variant-numeric: tabular-nums; }
 .estimate-table th.hl,
 .estimate-table td.hl { color: #e5484d; }

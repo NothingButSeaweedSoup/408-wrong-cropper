@@ -1,0 +1,7 @@
+安卓包升到 1.1（刷新会清 WebView 缓存）；得分趋势那张小表缩到 ~70%
+
+- android：顶部「刷新」改成 clearCache(true) + reload()，并显式 setCacheMode(LOAD_DEFAULT)；
+  前端无构建，改完 web/ 后 App 里直接 reload 可能还吃旧缓存
+- android：versionCode 1→2、versionName 1.0→1.1，产物改名 android/dist/408错题本-1.1.apk（旧的 1.0 删掉）
+- web：.estimate-table 字号 13→9px、内边距 6/8→4/6px、色块 8→6px，整体约为原来的 70%
+- 文档同步（README / AGENTS / build_apk.py 注释）

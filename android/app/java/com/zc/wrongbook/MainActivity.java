@@ -109,7 +109,7 @@ public class MainActivity extends Activity {
         refreshBtn.setAllCaps(false);
         refreshBtn.setOnClickListener(v -> {
             hideBanner();
-            web.reload();
+            reloadFresh();
         });
 
         top.addView(title);
@@ -146,6 +146,21 @@ public class MainActivity extends Activity {
         return root;
     }
 
+    /**
+     * 顶部「刷新」：先清掉 WebView 的 HTTP 缓存再 reload。
+     *
+     * 直接 reload() 时 WebView 可能仍拿缓存里的旧脚本，用户会遇到"服务端改了、App 里没变"
+     * （后端已经给静态资源加 no-cache + 版本戳，这里再兜一层，免得手机上只能靠清应用数据）。
+     */
+    private void reloadFresh() {
+        try {
+            web.clearCache(true);
+        } catch (Exception ignored) {
+            // 清缓存失败不该挡住刷新
+        }
+        web.reload();
+    }
+
     private void configureWebView() {
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -158,6 +173,8 @@ public class MainActivity extends Activity {
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        // 前端是无构建的（改 web/*.js 就生效），别让 WebView 自作主张用旧缓存
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setUserAgentString(settings.getUserAgentString() + " ZCWrongBook/1.0");
         WebView.setWebContentsDebuggingEnabled(true);
 
