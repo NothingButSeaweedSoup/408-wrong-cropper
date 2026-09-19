@@ -197,13 +197,43 @@
     }
 
     const rate = (score, full) => (full > 0 ? Math.round((score / full) * 100) : 0);
+    /* 三张表并排，科目名要用短的（"计算机组成原理" 太长） */
+    const MODULE_SHORT = { ds: "数据结构", co: "计组", os: "操作系统", cn: "计网" };
 
-    function sectionRow(label, score, full, strong = false) {
-      return el("div", { class: `total-item${strong ? " strong" : ""}` }, [
-        el("span", { class: "k" }, [label]),
-        el("b", {}, [`${score}`]),
-        el("span", { class: "hint" }, [`/ ${full}（${rate(score, full)}%）`]),
+    /** 一张小表：题头 + 每个模块一行 + 底部小计。行底色按得分率渐变，省掉一根进度条。 */
+    function sectionPanel(title, rows, subtotal, opts = {}) {
+      const panel = el("div", { class: `sec-panel${opts.strong ? " strong" : ""}` }, [
+        el("div", { class: "sec-title" }, [title]),
       ]);
+      const visible = rows.filter((row) => row.full > 0 || row.score > 0);
+      if (!visible.length) {
+        panel.appendChild(el("div", { class: "sec-empty" }, ["本卷没有这类题"]));
+      }
+      for (const row of visible) {
+        const pct = rate(row.score, row.full);
+        panel.appendChild(
+          el(
+            "div",
+            {
+              class: "sec-row",
+              style: `background:linear-gradient(90deg, ${row.color}33 ${pct}%, #f1f3f6 ${pct}%)`,
+            },
+            [
+              el("span", { class: "k" }, [row.label]),
+              el("span", { class: "v" }, [el("b", {}, [`${row.score}`]), ` / ${row.full}`]),
+              el("span", { class: "p" }, [`${pct}%`]),
+            ]
+          )
+        );
+      }
+      panel.appendChild(
+        el("div", { class: "sec-row sec-subtotal" }, [
+          el("span", { class: "k" }, [subtotal.label]),
+          el("span", { class: "v" }, [el("b", {}, [`${subtotal.score}`]), ` / ${subtotal.full}`]),
+          el("span", { class: "p" }, [`${rate(subtotal.score, subtotal.full)}%`]),
+        ])
+      );
+      return panel;
     }
 
     function recalc() {
@@ -212,25 +242,54 @@
       for (const { group, score } of c.choiceDetail) {
         refs.choice[group.key || `g${group.from}`].cell.textContent = `${score} / ${group.full} 分`;
       }
-      for (const key of ZC.MODULE_KEYS) {
-        const value = c.modules[key];
-        const full = c.moduleFull[key] || schema.module_full[key] || 0;
-        totalBox.appendChild(
-          el("div", { class: "total-item" }, [
-            el("span", { class: "k", style: `color:${ZC.COLORS[key]}` }, [ZC.SUBJECT_FULL[key]]),
-            el("b", {}, [`${round1(value)}`]),
-            el("span", { class: "hint" }, [`/ ${full}`]),
-            el("span", { class: "bar" }, [
-              el("i", { style: `width:${full ? Math.min(100, (value / full) * 100) : 0}%;background:${ZC.COLORS[key]}` }),
-            ]),
-          ])
-        );
+
+      // 客观题（选择题）/ 主观题 / 合计，各按模块拆开，三张表并排
+      const zero = () => ({ ds: 0, co: 0, os: 0, cn: 0 });
+      const objScore = zero();
+      const objFull = zero();
+      for (const { group, score } of c.choiceDetail) {
+        objScore[group.subject] += score;
+        objFull[group.subject] += group.full;
       }
+      const subjScore = zero();
+      const subjFull = zero();
+      for (const ref of Object.values(refs.subjective)) {
+        const full = Math.max(0, Number(ref.full.value) || 0);
+        const score = Math.max(0, Math.min(full, Number(ref.score.value) || 0));
+        subjScore[ref.item.subject] += score;
+        subjFull[ref.item.subject] += full;
+      }
+      const rowsOf = (scoreMap, fullMap) =>
+        ZC.MODULE_KEYS.map((key) => ({
+          label: MODULE_SHORT[key],
+          color: ZC.COLORS[key],
+          score: round1(scoreMap[key]),
+          full: round1(fullMap[key]),
+        }));
+
       const total = round1(c.objective + c.subjective);
       const totalFull = round1(c.objectiveFull + c.subjectiveFull);
-      totalBox.appendChild(sectionRow("客观题", c.objective, c.objectiveFull));
-      totalBox.appendChild(sectionRow("主观题", c.subjective, c.subjectiveFull));
-      totalBox.appendChild(sectionRow("总分", total, totalFull, true));
+      totalBox.append(
+        sectionPanel("客观题", rowsOf(objScore, objFull), {
+          label: "客观小计",
+          score: c.objective,
+          full: c.objectiveFull,
+        }),
+        sectionPanel("主观题", rowsOf(subjScore, subjFull), {
+          label: "主观小计",
+          score: c.subjective,
+          full: c.subjectiveFull,
+        }),
+        sectionPanel(
+          "合计",
+          rowsOf(
+            Object.fromEntries(ZC.MODULE_KEYS.map((k) => [k, objScore[k] + subjScore[k]])),
+            Object.fromEntries(ZC.MODULE_KEYS.map((k) => [k, objFull[k] + subjFull[k]]))
+          ),
+          { label: "总分", score: total, full: totalFull },
+          { strong: true }
+        )
+      );
     }
 
     /* 换年份要换表单：某年 DS 只有 10 个选择题、综合题分值也可能不同 */

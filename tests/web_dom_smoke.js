@@ -467,16 +467,20 @@ async function main() {
   subjScore.value = "12";
   subjScore.fire("input");
   formText = textOf(byId.recordForm);
+  const totalsText = squash(formText);
+  check("三张表并列：客观题 / 主观题 / 合计",
+        totalsText.includes("客观题") && totalsText.includes("主观题") && totalsText.includes("合计"),
+        formText.slice(-200));
   // 客观题 10×1.5 + 10×2 = 35/35，主观题 12/12，合计 47/47
-  check("客观题小计 = 35 / 35（100%）", squash(formText).includes("客观题35/35（100%）"), formText.slice(-160));
-  check("主观题小计 = 12 / 12（100%）", squash(formText).includes("主观题12/12（100%）"), formText.slice(-160));
-  check("总分 = 客观 + 主观 = 47 / 47（100%）", squash(formText).includes("总分47/47（100%）"), formText.slice(-160));
+  check("客观题小计 = 35 / 35（100%）", totalsText.includes("客观小计35/35100%"), totalsText.slice(-140));
+  check("主观题小计 = 12 / 12（100%）", totalsText.includes("主观小计12/12100%"), totalsText.slice(-140));
+  check("总分 = 客观 + 主观 = 47 / 47（100%）", totalsText.includes("总分47/47100%"), totalsText.slice(-140));
 
   subjScore.value = "0";
   subjScore.fire("input");
-  formText = squash(textOf(byId.recordForm));
+  const totalsZero = squash(textOf(byId.recordForm));
   check("主观题得 0 分时总分跟着掉到 35",
-        formText.includes("主观题0/12（0%）") && formText.includes("总分35/47（74%）"), formText.slice(-160));
+        totalsZero.includes("主观小计0/120%") && totalsZero.includes("总分35/4774%"), totalsZero.slice(-140));
 
   console.log("\n5) 点击「导出记录」Tab");
   const historyTab = byClass.tab.find((t) => t.dataset.view === "history");

@@ -177,7 +177,41 @@ select.input {
 .form-row .label { min-width: 104px; font-size: 13px; color: var(--text); }
 .score-cell { min-width: 84px; color: var(--brand); font-size: 12px; }
 .form-actions { display: flex; gap: 8px; margin-top: 10px; }
-.totals { margin-top: 10px; background: #f7f8fa; border-radius: 10px; padding: 8px 10px; }
+.totals { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+/* 录入表单底部：客观题 / 主观题 / 合计 三张小表并排（窄屏自动换行） */
+.sec-panel {
+  flex: 1 1 210px;
+  min-width: 168px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px 7px;
+  background: #fff;
+}
+.sec-panel.strong { border-color: #cfe0ff; background: #f7faff; }
+.sec-title { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 5px; }
+.sec-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.sec-row .k { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sec-row .v { color: #555; font-variant-numeric: tabular-nums; }
+.sec-row .v b { color: var(--fg, #1f2329); }
+.sec-row .p { width: 34px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sec-row.sec-subtotal {
+  margin: 4px 0 0;
+  padding-top: 5px;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  font-weight: 600;
+  background: none;
+}
+.sec-row.sec-subtotal .p { color: var(--brand); }
+.sec-empty { font-size: 12px; color: var(--muted); padding: 2px 6px; }
 .total-item { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 2px 0; }
 .total-item .k { min-width: 68px; }
 .total-item .bar { flex: 1; height: 6px; background: #e6e8ec; border-radius: 3px; overflow: hidden; min-width: 40px; }
