@@ -245,12 +245,13 @@ select.input {
 /* ---------------------------------------------------------------- 当前水平估计（小表格） */
 .estimate { margin: 4px 0 12px; }
 .estimate-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
-/* 得分趋势里那张小表：整体按原来的 ~70% 缩放（字号 13→9，内边距 6/8→4/6，色块 8→6） */
-.estimate-table { width: 100%; border-collapse: collapse; font-size: 9px; }
+/* 得分趋势里那张小表：**固定宽度**（原来是 width:100% 跟着屏幕拉满，1080p 下 5 列各 200 多 px 很空）。
+   想调大小就改下面这一个数；max-width 只是防手机窄屏溢出。 */
+.estimate-table { width: 100%; max-width: 460px; border-collapse: collapse; font-size: 12px; }
 .estimate-table th,
-.estimate-table td { padding: 4px 6px; text-align: center; border-bottom: 1px solid var(--line); }
-.estimate-table th { font-weight: 600; color: var(--muted); font-size: 9px; white-space: nowrap; }
-.estimate-table th i { width: 6px; height: 6px; border-radius: 2px; display: inline-block; margin-right: 3px; }
+.estimate-table td { padding: 5px 7px; text-align: center; border-bottom: 1px solid var(--line); }
+.estimate-table th { font-weight: 600; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.estimate-table th i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; margin-right: 3px; }
 .estimate-table td { font-weight: 600; font-variant-numeric: tabular-nums; }
 .estimate-table th.hl,
 .estimate-table td.hl { color: #e5484d; }
