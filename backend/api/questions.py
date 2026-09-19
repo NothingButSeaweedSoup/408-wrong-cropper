@@ -58,7 +58,6 @@ def _recrop(conn, paper_row, question_row) -> None:
         config.CROPS_DIR / str(int(paper_row["id"])),
         _page_paths(int(paper_row["id"])),
         data,
-        rel_to=config.ROOT_DIR,
     )
     conn.execute(
         "UPDATE questions SET bbox_json=?, image_paths=? WHERE id=?",

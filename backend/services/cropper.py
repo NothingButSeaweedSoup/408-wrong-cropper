@@ -227,8 +227,6 @@ def split_paper(
     pages: list[PageImage],
     main_marks: list[QuestionMark],
     sub_marks: list[QuestionMark],
-    *,
-    rel_to: Path,
 ) -> list[dict]:
     """把识别结果切成题目图片，返回待入库的题目列表。"""
     grays = {p.page_no: load_gray(p.path) for p in pages}
@@ -249,7 +247,7 @@ def split_paper(
                 x0=x0,
                 x1=x1,
             )
-            block.path = str(out.relative_to(rel_to)).replace("\\", "/")
+            block.path = config.rel_path(out)
 
         own = sub_marks_for(blocks, sub_marks)
         subject, qtype, score = config.subject_of(qno)
@@ -284,8 +282,6 @@ def recrop_question(
     paper_dir: Path,
     page_paths: dict[int, Path],
     question: dict,
-    *,
-    rel_to: Path,
 ) -> dict:
     """人工校正后按新的 bbox 重新裁剪，返回更新后的 image_paths / bbox。"""
     blocks = question["bbox"].get("blocks", [])
@@ -304,7 +300,7 @@ def recrop_question(
             x0=int(question["bbox"].get("x0") or 0),
             x1=question["bbox"].get("x1"),
         )
-        block["path"] = str(out.relative_to(rel_to)).replace("\\", "/")
+        block["path"] = config.rel_path(out)
         paths.append(block["path"])
     question["image_paths"] = paths
     return question

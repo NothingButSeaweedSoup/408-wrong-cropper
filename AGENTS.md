@@ -53,7 +53,7 @@
 | 异步任务 | Celery / RQ（可选） | **不用**；`backend/tasks.py` 单线程队列 + 前端轮询 `papers.status/progress` |
 | 文档转换 | LibreOffice headless（若需 docx → pdf） | 未使用，需复查分页时在 Word 里另存 PDF |
 | 版本管理 | Git | 同左（已提供 `.gitignore`） |
-| 部署 | Docker | 不用，本地 `start.bat` / uvicorn 直接跑 |
+| 部署 | Docker | **有** `Dockerfile` + `docker-compose.yml`（多阶段：node 构建 admin → python:3.12-slim 跑后端，见 7.12 / 8.6）；本地开发仍可 `start.bat` 直接跑 |
 
 > **说明（v0.1 已按轻量化调整）**：  
 > - 管理后台负责上传真题、人工校正题目边界：Vue 3 + Vite，叠加层画在**后端预渲染的页面 PNG** 上
@@ -124,6 +124,9 @@
 ├── AGENTS.md
 ├── README.md
 ├── requirements.txt
+├── Dockerfile                # 多阶段构建：node 构建管理后台 → python:3.12-slim 跑后端
+├── docker-compose.yml        # 单机部署：18100 端口 + ./data 卷 + 环境变量
+├── .dockerignore             # 排除 backend/.env、data/、android/、tests/ 等
 ├── .env.example              # 复制成 backend/.env（配 ZC_ADMIN_USERS / ZC_PORT 等）
 ├── start.bat                 # 一键启动后端（python -m backend）
 ├── .gitignore
@@ -350,6 +353,22 @@ X 轴/聚合规则：
 - 前端：管理后台 `components/StructurePanel.vue`（题组表 + 综合题表 + 满分合计，total ≠ 150 只是提示）；
   用户端 `web/scores.js` 在**换年份**时重新 `GET /api/scores/schema?year=`，结构变了就带已填内容重建表单。
 
+### 7.12 Docker（`Dockerfile` / `docker-compose.yml`，v0.2 追加）
+
+一个容器跑全部：FastAPI 同时托管 `/`（用户端 H5）、`/admin/`（管理后台）、`/api/*`；数据全在 `/data` 卷里。
+
+- **多阶段构建**：`node:20-alpine` 里 `npm install && npm run build` 出 `admin/dist`，
+  再复制进 `python:3.12-slim`；运行镜像只装 `requirements.txt` + `backend/` + `web/` + `admin/dist`。
+- **只装了运行期系统库**：`libgomp1`（onnxruntime）、`libglib2.0-0`、**`libgl1` + `libxcb1`**（opencv 的 so 链着它们，
+  少了会在切题时报 `libxcb.so.1: cannot open shared object file`）、`tzdata`。
+- **非 root**：uid 10001 的 `zc` 用户跑，`/app` 属于 root（只读），只能写 `/data`。
+- **环境变量**：`ZC_DATA_DIR=/data`、`ZC_HOST=0.0.0.0`、`ZC_PORT=18100`（镜像里已设）；管理员名单与兜底密钥
+  由 compose 传 `ZC_ADMIN_USERS` / `ZC_ADMIN_KEY`，**不把 `backend/.env` 打进镜像**（`.dockerignore` 排除）。
+- **健康检查**：`HEALTHCHECK` 用 python 打 `/api/health`（不额外装 curl），`docker compose ps` 会显示 healthy。
+- 镜像里不带 `tests/`、`android/`、`data/`；改完代码 `docker compose up -d --build` 即可。
+- 验证过：容器里跑 `tests/http_smoke.py http://127.0.0.1:18101`（完整 OCR→切题→导出 Word→下载）全绿，
+  `tests/container_check.py <地址>` 可以快速打一遍首页/后台/接口。
+
 ## 8. 开发环境与运行（v0.2 实际，Windows）
 
 ### 依赖安装（一次性）
@@ -390,6 +409,17 @@ npm run build      # 产物 admin/dist，后端重启后由 /admin/ 托管
 .\.venv\Scripts\python.exe android\fetch_sdk.py    # 首次：platform + build-tools + R8，约 130MB
 .\.venv\Scripts\python.exe android\build_apk.py    # 产物 android/dist/408错题本-1.1.apk
 ```
+
+### Docker（部署到服务器，本机 Windows 上也能跑）
+```powershell
+docker compose up -d --build      # 构建 + 后台启动（首次 3~6 分钟，镜像约 1.3GB）
+docker compose logs -f app        # 启动横幅：访问地址 / 管理员账号 / 兜底密钥
+docker compose ps                 # healthy 才算真起来
+docker compose down               # 停止（数据在 ./data）
+```
+- 本机验证时别再占 18100（本机服务在用）：`docker run -d -p 18101:18100 ...`，再打 18101；
+- Linux 服务器上若报数据目录没权限：`sudo chown -R 10001:10001 data`（容器里是 uid 10001 的 `zc`）；
+- 容器里 `ZC_DATA_DIR=/data` 在项目目录**外面**，所以入库路径要靠 `config.rel_path()`（见 11 节的坑）。
 
 ### 测试
 ```powershell
@@ -474,6 +504,10 @@ node --check web\scores.js                           # 前端改动后至少过�
 - 这台机器的 `pwsh` 不在 PATH 里、实际执行的是 **Windows PowerShell 5.1**：`.ps1` 必须带 UTF-8 BOM（否则中文乱码报语法错），
   且没有 `Invoke-RestMethod -Form`。所以测试脚本一律用 Python 写（`tests/http_smoke.py`）。
 - 控制台是 GBK：Python 脚本里加 `sys.stdout.reconfigure(encoding="utf-8")`，否则打印中文/符号会 `UnicodeEncodeError`。
+- **数据目录搬出项目根目录时，入库路径会炸**：上传/切图时用 `Path.relative_to(ROOT_DIR)` 存相对路径，
+  容器里 `ZC_DATA_DIR=/data` 不在 `/app` 下 → `ValueError: '/data/uploads/x.pdf' is not in the subpath of '/app'`
+  （上传直接 500）。现在统一走 `config.rel_path()`：能相对就相对，否则存绝对路径，
+  `abs_path()` 本来就同时认两种。**新增任何"入库前算路径"的地方都用它。**
 - **别用 PowerShell 读写 UTF-8 源码**：PS 5.1 的 `Get-Content -Raw` 按 GBK 解码、`Set-Content -Encoding UTF8` 再编码，
   会把中文注释变成乱码（甚至 `SyntaxError: invalid character '＄'`），而且**不可逆**（GBK 解不出的字节变成 U+FFFD）。
   要批量改文件就用 Python（`Path.read_text(encoding="utf-8")`）或 `edit` 工具；弄坏了用 `git checkout -- <file>` 回滚再重做。
@@ -516,6 +550,10 @@ node --check web\scores.js                           # 前端改动后至少过�
 - 手工打包 APK 时 `resources.arsc` **必须不压缩**（`ZIP_STORED`），否则 targetSdk 30+ 在 Android 11 上装不上。
 - WebView 必须开 `android:usesCleartextTraffic="true"`，否则 Android 9+ 直接拦掉局域网 http。
 - `<a download>` 在 WebView 里不一定触发下载，所以额外拦了 `/api/exports/*/download` 交给系统下载器。
+- 容器里 opencv 即使装了 `opencv-python-headless`，so 里仍链着 `libGL.so.1` / `libxcb.so.1`，
+  精简镜像必须补 `libgl1 libxcb1`；`ldd` 一下 cv2 的 so 看 `not found` 最快（构建时 `--entrypoint sh` 进容器查）。
+- 容器里 `backend/.env` 写不进去（`/app` 只读）：`ensure_admin_key()` 已经 fail-soft，
+  只打印提示不报错（否则容器起不来）。
 - 腾讯镜像 `mirrors.cloud.tencent.com/AndroidSDK/` 有 platform/build-tools（platform 要按
   `repository2-3.xml` 里的真实文件名，是 `platform-34-ext7_r03.zip` 这种）。
 

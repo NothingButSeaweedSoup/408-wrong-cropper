@@ -129,11 +129,23 @@ def test_subject_rules() -> None:
     check("满分合计 150", sum(config.MODULE_FULL_SCORE[k] for k in ("ds", "co", "os", "cn")) == 150)
 
 
+def test_rel_path() -> None:
+    """入库存的路径：项目内用相对路径，数据目录被搬走（容器 ZC_DATA_DIR=/data）时退回绝对路径。"""
+    print("路径入库（Docker 里数据目录在项目外）")
+    inside = config.DATA_DIR / "crops" / "1" / "2009_q1_p1.png"
+    check("项目内 -> 相对路径", config.rel_path(inside) == "data/crops/1/2009_q1_p1.png", config.rel_path(inside))
+    outside = Path("/data/uploads/2009.pdf")
+    check("项目外 -> 绝对路径（不再抛 ValueError）",
+          config.rel_path(outside) == "/data/uploads/2009.pdf", config.rel_path(outside))
+    check("分隔符统一成 /", "\\" not in config.rel_path(inside) and "\\" not in config.rel_path(outside))
+
+
 if __name__ == "__main__":
     test_question_number_regex()
     test_sub_label_regex()
     test_filter_main_marks()
     test_ink_helpers()
     test_subject_rules()
+    test_rel_path()
     print("\n全部通过" if ok else "\n存在失败项")
     raise SystemExit(0 if ok else 1)

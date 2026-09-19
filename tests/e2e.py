@@ -139,7 +139,7 @@ def main() -> int:
     page_paths = {
         paper_id: {int(r["page_no"]): (config.ROOT_DIR / r["image_path"]) for r in page_rows}
     }
-    word_builder.materialize_pieces(entries, page_paths, config.CROPS_DIR, rel_to=config.ROOT_DIR)
+    word_builder.materialize_pieces(entries, page_paths, config.CROPS_DIR)
     out = config.EXPORT_DIR / word_builder.export_filename()
     stats = word_builder.build(entries, out, with_caption=False, note_lines=0, title="2009 年 408 真题错题本")
     print(f"   {out.name}  {out.stat().st_size} bytes  images={stats['image_count']}")

@@ -46,7 +46,7 @@ def process_paper(paper_id: int) -> None:
                     (
                         paper_id,
                         p.page_no,
-                        str(p.path.relative_to(config.ROOT_DIR)).replace("\\", "/"),
+                        config.rel_path(p.path),
                         p.width,
                         p.height,
                     )
@@ -78,7 +78,6 @@ def process_paper(paper_id: int) -> None:
             pages,
             main_marks,
             sub_marks,
-            rel_to=config.ROOT_DIR,
         )
 
         with db.get_conn() as conn:

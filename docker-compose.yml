@@ -1,0 +1,35 @@
+# 408 错题助手 —— 单机部署（用户端 H5 + 管理后台 + 接口，同一个端口 18100）
+#
+#   docker compose up -d --build      # 首次构建并后台启动
+#   docker compose logs -f            # 看启动横幅（会打印访问地址与兜底密钥）
+#   docker compose down               # 停止（数据在 ./data，不会丢）
+#
+# 数据全部落在 ./data（SQLite + 上传的 PDF + 页面图 + 裁剪图 + 导出的 Word），
+# 换服务器时把整个 data/ 拷过去即可；想带走本机成绩就把本机 data/db.sqlite 一起拷上来。
+#
+# 内存：OCR（onnxruntime）跑起来大概占 500MB~1G，建议服务器 ≥ 2G。
+
+services:
+  app:
+    build: .
+    image: 408-wrong-cropper:latest
+    container_name: zc-wrongbook
+    restart: unless-stopped
+    ports:
+      # 左边是宿主机端口，想换端口就改这里（例如 8080:18100）
+      - "18100:18100"
+    environment:
+      # ↓↓↓ 部署前必改：你的管理员用户名（逗号分隔可多个），这个账号登录后就是管理员
+      ZC_ADMIN_USERS: "admin"
+      # ↓↓↓ 建议固定下来：脚本/首次引导用的兜底密钥；留空则每次启动随机生成（只在日志里能看到）
+      ZC_ADMIN_KEY: ""
+      # 是否允许用户自助注册；关掉后由管理员在后台建账号
+      ZC_ALLOW_REGISTER: "1"
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data:/data
+    # 想限制资源可以打开（OCR 是主要开销）
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 2g

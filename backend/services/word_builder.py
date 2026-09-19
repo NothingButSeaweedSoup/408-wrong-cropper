@@ -87,8 +87,6 @@ def materialize_pieces(
     entries: list[Entry],
     page_paths: dict[int, dict[int, Path]],
     out_root: Path,
-    *,
-    rel_to: Path,
 ) -> None:
     """把"按小问拆出来的段"实际裁成图片文件（整块的题目本来就有图，跳过）。
 
@@ -113,7 +111,7 @@ def materialize_pieces(
                 continue
             out = out_root / str(paper_id) / f"{year}_q{qno}_p{piece.page_no}_{index}.png"
             crop_block(page_path, piece.y0, piece.y1, out, x0=x0, x1=int(x1) if x1 else None)
-            piece.path = str(out.relative_to(rel_to)).replace("\\", "/")
+            piece.path = config.rel_path(out)
 
 
 def build(

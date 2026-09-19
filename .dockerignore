@@ -1,20 +1,32 @@
-# 构建镜像时不要把本机的东西塞进上下文（尤其是 130MB 的 Android SDK）
+# 构建镜像时不要进上下文的东西（越小越快）
 .git
 .gitignore
-.gitattributes
-.venv
-.npm-cache
-data
-.android-sdk
-android/build
-android/dist
-admin/node_modules
-admin/dist
-**/__pycache__
-**/*.pyc
-*.log
-.env
+.github
+
+# 运行期数据与本地密钥：绝对不能进镜像（db.sqlite 是隐私数据，.env 是管理密钥）
+data/
 backend/.env
-tests
-AGENTS.md
-README.md
+.env
+.env.local
+
+# 本地虚拟环境 / 依赖缓存
+.venv/
+.npm-cache/
+node_modules/
+admin/node_modules/
+admin/dist/
+__pycache__/
+*.pyc
+
+# 安卓端与测试（镜像里用不到）
+android/build/
+android/dist/
+.android-sdk/
+tests/
+
+# 文档与编辑器
+*.md
+!README.md
+.vscode/
+.idea/
+*.log

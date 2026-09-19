@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,6 +43,8 @@ async def lifespan(_app: FastAPI):
         print(f"  局域网   {urls[1]}   ← 手机 / 平板 / 安卓 App 填这个")
     else:
         print("  局域网   没查到本机 IP，手机可能连不上（可跑 python -m backend --print-ip 复查）")
+    if Path("/.dockerenv").exists():  # 容器里：上面那些是容器内网地址，别直接抄
+        print("  容器内   上面是容器自己的地址；宿主机/手机请用 http://<服务器IP>:18100（compose 里映射的端口）")
     print(f"  管理后台 http://127.0.0.1:{port}/admin/")
     if config.ADMIN_USERS:
         print(f"  管理员账号：{', '.join(sorted(config.ADMIN_USERS))}（backend/.env 的 ZC_ADMIN_USERS）")

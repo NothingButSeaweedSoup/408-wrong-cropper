@@ -44,7 +44,7 @@ async def upload_paper(
                 raise HTTPException(413, f"文件超过 {MAX_UPLOAD_MB}MB")
             fp.write(chunk)
 
-    rel = str(dest.relative_to(config.ROOT_DIR)).replace("\\", "/")
+    rel = config.rel_path(dest)
     with db.get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO papers (year, title, pdf_path, status, dpi, created_at) VALUES (?,?,?,?,?,?)",

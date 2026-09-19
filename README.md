@@ -12,7 +12,8 @@
    管理后台也用同一套账号登录，**用户名写在 `.env` 的 `ZC_ADMIN_USERS` 里就是管理员**。
 4. **三端**：用户端 H5（手机浏览器）、管理后台（Vue 3）、**安卓 App**（WebView 壳，APK 可直接安装）。
 
-设计目标是**尽量轻**：一个 Python 进程 + 一个 SQLite 文件 + 免构建的前端，没有 MySQL、没有 Celery、没有 PaddleOCR、没有 Docker、没有 Gradle。
+设计目标是**尽量轻**：一个 Python 进程 + 一个 SQLite 文件 + 免构建的前端，没有 MySQL、没有 Celery、没有 PaddleOCR、没有 Gradle；
+要上服务器也有现成的 `Dockerfile` + `docker-compose.yml`（见第 12 节），一个容器一个卷就够。
 
 ---
 
@@ -28,7 +29,7 @@
 | UniApp 客户端 | **原生 H5 + 安卓 WebView 壳** | 免 HBuilderX 构建链；安卓端用系统 API 手打 APK，不引 androidx/Gradle |
 | passlib / PyJWT | **标准库 hashlib.pbkdf2_hmac + 随机 token 存库** | 单机场景够用，省两个依赖 |
 | ECharts / uCharts | **自绘 SVG 折线图**（`web/chart.js`，约 200 行） | 离线可用、几 KB、和页面风格统一 |
-| LibreOffice / Docker | 不使用 | 需复查分页时在 Word 里另存 PDF |
+| LibreOffice / Docker | 不用 LibreOffice；**Docker 只作为部署方式**（多阶段构建，见第 12 节） | 需复查分页时在 Word 里另存 PDF；容器里跑的是同一个 `python -m backend` |
 
 ---
 
@@ -83,8 +84,11 @@
 │   ├── e2e.py                # 端到端（含 OCR）
 │   └── http_smoke.py         # HTTP 全链路（鉴权 + 用户 + 错题 + 导出）
 ├── requirements.txt
+├── Dockerfile                # 多阶段：node 构建管理后台 → python:3.12-slim 跑后端
+├── docker-compose.yml        # 单机部署（18100 端口 + ./data 卷）
+├── .dockerignore
 ├── .env.example              # 复制成 backend/.env 用
-└── start.bat                 # 一键启动后端
+└── start.bat                 # 一键启动后端（本地开发）
 ```
 
 ---
@@ -255,7 +259,11 @@ node tests\web_dom_smoke.js                          # 前端交互（登录门/
 `e2e.py` 会自造两页图片型 PDF（含跨页题、10 个小问、页脚），在 `data/_selftest/` 下跑完整流程，
 并输出 `crops_montage.png` 拼接图供肉眼检查切题结果。`http_smoke.py` 覆盖鉴权（未登录/非管理员/密钥三档）、
 Cookie 登录态、用户注册登录、得分录入/编辑/删除/趋势/水平估计、**卷面结构（读/改/重建 + 用户端表单跟着变）**、
-错题校正、导出下载校验，跑完自动清理测试数据。
+错题校正、导出下载校验，跑完自动清理测试数据。`container_check.py` 打一遍容器/线上实例的首页、后台与接口：
+
+```powershell
+.\.venv\Scripts\python.exe tests\container_check.py http://127.0.0.1:18101   # 参数是目标地址
+```
 
 ## 11. 待办
 
@@ -263,3 +271,57 @@ Cookie 登录态、用户注册登录、得分录入/编辑/删除/趋势/水平
 - 得分趋势增加「历史最高/最低/平均」卡片、按模块切换单线；
 - 导出 PDF、Anki 卡片；错题勾选记录云端同步（当前刻意只存本地）；
 - 录入时把「试卷结构」直接同步给用户端做只读提示（现在只在表单上显示来源）。
+
+## 12. Docker 部署（丢服务器上）
+
+一个容器搞定：FastAPI 同时托管用户端 H5（`/`）、管理后台（`/admin/`）、接口（`/api/*`），
+数据全在 `./data`（SQLite + 上传的 PDF + 页面图 + 裁剪图 + 导出的 Word）。
+
+```bash
+# 1) 服务器上装好 docker + compose，把仓库拉下来（或整个目录 rsync 上去）
+git clone <你的仓库> 408-wrong-cropper && cd 408-wrong-cropper
+
+# 2) 改 docker-compose.yml 里的 ZC_ADMIN_USERS（你的用户名）；想固定兜底密钥就填 ZC_ADMIN_KEY
+vi docker-compose.yml
+
+# 3) 构建 + 后台启动（首次构建约 3~6 分钟，镜像约 1.3GB：onnxruntime + opencv + pymupdf）
+docker compose up -d --build
+
+# 4) 看启动横幅（会打印访问地址、管理员账号、兜底密钥）
+docker compose logs -f app
+```
+
+打开 `http://服务器IP:18100/` 就是用户端，`/admin/` 是管理后台。第一次进管理后台用密钥登录，
+去用户端注册一个和 `ZC_ADMIN_USERS` 同名的账号（注册后自动成为管理员），以后就用账号登录。
+
+**想把自己本机的成绩带过去**：把本机 `data/db.sqlite` 拷到服务器的 `./data/`（停服再拷更稳妥）：
+
+```bash
+docker compose down
+scp data/db.sqlite server:/path/to/408-wrong-cropper/data/
+docker compose up -d
+```
+
+**常用操作**：
+
+```bash
+docker compose ps                 # 状态（healthy 才算真起来）
+docker compose restart            # 重启
+docker compose down               # 停止（数据在 ./data，不会丢）
+docker compose up -d --build      # 改了代码后重新构建
+docker compose logs -f --tail=50  # 看日志
+```
+
+**几个要点**：
+
+- **端口**：容器里固定 18100，宿主机端口在 compose 的 `ports` 里改（例如 `"8080:18100"`）；
+- **数据卷**：`./data:/data`。Linux 上如果容器报权限错误，执行一次 `sudo chown -R 10001:10001 data`
+  （容器里用 uid 10001 的非 root 用户跑）；Windows/macOS 的 Docker Desktop 不用管；
+- **环境变量**：`ZC_ADMIN_USERS`（管理员用户名）、`ZC_ADMIN_KEY`（兜底密钥，留空则每次启动随机生成、
+  只在日志里能看到，**想固定脚本调用就填上**）、`ZC_ALLOW_REGISTER`、`TZ`、`ZC_DATA_DIR=/data`；
+- **健康检查**：镜像自带 `HEALTHCHECK`（打 `/api/health`），`docker compose ps` 显示 healthy 即可；
+- **反向代理**：想上 https 就在前面挂 Caddy/Nginx 反代到 `127.0.0.1:18100`；
+  应用只用同源请求，反代不用额外配置；
+- **资源**：OCR（onnxruntime）跑起来占 500MB~1G 内存，建议服务器 ≥ 2G；
+- **不进镜像的东西**：`backend/.env`（管理密钥）、`data/`、`android/`、`tests/` 都被 `.dockerignore` 排除，
+  密钥只走环境变量。

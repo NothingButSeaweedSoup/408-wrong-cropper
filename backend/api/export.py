@@ -89,7 +89,6 @@ def export_docx(req: ExportRequest):
         entries,
         _page_paths({int(q["paper_id"]) for q in questions}),
         config.CROPS_DIR,
-        rel_to=config.ROOT_DIR,
     )
 
     filename = word_builder.export_filename()
@@ -110,7 +109,7 @@ def export_docx(req: ExportRequest):
                 json.dumps(sorted({int(q["paper_id"]) for q in questions})),
                 json.dumps([int(q["id"]) for q in questions]),
                 target.name,
-                str(target.relative_to(config.ROOT_DIR)).replace("\\", "/"),
+                config.rel_path(target),
                 json.dumps(req.model_dump(), ensure_ascii=False),
                 db.now(),
             ),

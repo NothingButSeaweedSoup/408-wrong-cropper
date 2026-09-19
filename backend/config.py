@@ -71,6 +71,21 @@ def is_admin_username(username: str | None) -> bool:
     return bool(username) and username.strip() in ADMIN_USERS
 
 
+def rel_path(path: str | Path) -> str:
+    """把路径转成「相对项目根目录」的字符串，用在入库/入库前的记录里。
+
+    数据目录不一定是项目里的 `data/`：容器里 `ZC_DATA_DIR=/data` 就在项目外面，
+    这时 `relative_to()` 会抛 ValueError（Docker 里第一次跑上传就是这么 500 的），
+    所以兜底存绝对路径 —— `abs_path()`（api/common.py、services/pipeline.py）本来就同时认两种。
+    路径统一用 `/` 分隔，换平台/换机器也不会串。
+    """
+    candidate = Path(path)
+    try:
+        return str(candidate.relative_to(ROOT_DIR)).replace("\\", "/")
+    except ValueError:
+        return str(candidate).replace("\\", "/")
+
+
 # ---------------------------------------------------------------- 本机地址
 def local_ips() -> list[str]:
     """本机可用于局域网访问的 IPv4（第一项是默认出口网卡的那个）。
@@ -107,16 +122,23 @@ def ensure_admin_key() -> str:
 
     日常登录用账号（见 ZC_ADMIN_USERS），这个密钥只是兜底：脚本调用、
     以及"还没有管理员账号时"进后台把账号建起来。返回生效的密钥。
+
+    容器里代码目录通常是只读的（Docker 非 root 用户），写不进去不算错：
+    密钥只对本次进程有效，提示用户把 ZC_ADMIN_KEY 写进环境变量即可。
     """
     global ADMIN_KEY
     if ADMIN_KEY:
         return ADMIN_KEY
     ADMIN_KEY = secrets.token_urlsafe(24)
-    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    prefix = "" if not ENV_FILE.exists() or ENV_FILE.stat().st_size == 0 else "\n"
-    # 用 utf-8-sig：新建文件时带 BOM，Windows PowerShell 5.1 读中文注释才不会乱码
-    with ENV_FILE.open("a", encoding="utf-8-sig") as fp:
-        fp.write(f"{prefix}# 管理后台密钥（首次启动自动生成，改完要重启后端）\nZC_ADMIN_KEY={ADMIN_KEY}\n")
+    try:
+        ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+        prefix = "" if not ENV_FILE.exists() or ENV_FILE.stat().st_size == 0 else "\n"
+        # 用 utf-8-sig：新建文件时带 BOM，Windows PowerShell 5.1 读中文注释才不会乱码
+        with ENV_FILE.open("a", encoding="utf-8-sig") as fp:
+            fp.write(f"{prefix}# 管理后台密钥（首次启动自动生成，改完要重启后端）\nZC_ADMIN_KEY={ADMIN_KEY}\n")
+    except OSError as exc:  # 只读文件系统（容器里很常见）
+        print(f"  提示：写不进 {ENV_FILE}（{exc}）")
+        print("  本次的兜底密钥重启后会变；建议用环境变量 ZC_ADMIN_KEY 固定下来")
     return ADMIN_KEY
 
 
