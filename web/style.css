@@ -287,9 +287,79 @@ main {
   padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
 }
 
-#selInfo {
+/* 年份 / 科目：进入时都是「请选择」，不预选任何一项 */
+.pick-row {
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 8px;
+}
+
+.pick-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pick-label {
+  font-size: 12px;
   color: var(--muted);
+}
+
+/* 底栏「已选 n 题」做成按钮：点开看清单（能逐条删 / 一键删） */
+.sel-info {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 12px;
   font-size: 13px;
+  cursor: pointer;
+  max-width: 62%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sel-info.empty {
+  color: var(--muted);
+  cursor: default;
+}
+
+.sel-list {
+  max-height: 46vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sel-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.sel-item .t {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sel-item .rm {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: #c0392b;
+  border-radius: 6px;
+  padding: 2px 9px;
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .history {

@@ -1,69 +1,56 @@
-/* 用户端：选错题 -> 生成 Word；导出记录。依赖 core.js 提供的 ZC。 */
+/* 用户端：选错题 -> 生成 Word。依赖 core.js 提供的 ZC。
+   进入这一页时**不预选**任何年份/科目（下拉里都是「请选择」），选了年份才去拉那一年的题目；
+   勾选跨年份累计（存 localStorage），底栏「已选 n 题」点开是清单，可逐条删 / 一键删除。 */
 (() => {
   "use strict";
   const { $, api, toast, download, el } = ZC;
 
   const STORE_KEY = "zc.selected";
-  const YEAR_KEY = "zc.lastYear";
 
   const state = {
-    years: [], // [{year, papers, questions}] —— 来自公开接口 /api/catalog
+    years: [], // [{year, papers, questions}] —— 来自 /api/catalog
     questions: [], // 当前年份的题目（服务端已按年份过滤）
     cache: new Map(), // 年份 -> 题目列表（本地再缓存一层，切来切去不用重新请求）
-    selected: new Set(JSON.parse(localStorage.getItem(STORE_KEY) || "[]")),
-    year: "",
-    subject: "all",
+    selected: new Set(JSON.parse(localStorage.getItem(STORE_KEY) || "[]").map(Number)),
+    year: "", // "" = 还没选（下拉显示「请选择」）
+    subject: "", // "" = 还没选（不按科目过滤）
     keyword: "",
   };
+
+  const cards = new Map(); // 题目 id -> 卡片元素（面板里删一条时只改样式，不重渲染图片）
+  const meta = new Map(); // 题目 id -> {year, question_no, subject, type} 或 null（服务端已没有）
+  let selOpen = false;
 
   function saveSelection() {
     localStorage.setItem(STORE_KEY, JSON.stringify([...state.selected]));
   }
 
-  /* ---------------------------------------------------------- 渲染 */
-  function renderYearChips() {
-    const box = $("#yearChips");
-    box.innerHTML = "";
-    const years = [...state.years].sort((a, b) => b.year - a.year);
-    if (!years.length) {
-      box.appendChild(el("span", { class: "hint" }, ["还没有导入真题，去管理后台上传 PDF"]));
-      return;
+  /* ---------------------------------------------------------- 下拉：年份 / 科目 */
+  function renderYearOptions() {
+    const select = $("#yearSelect");
+    select.innerHTML = "";
+    select.appendChild(el("option", { value: "" }, ["请选择"]));
+    for (const item of [...state.years].sort((a, b) => b.year - a.year)) {
+      select.appendChild(el("option", { value: String(item.year) }, [`${item.year} 年（${item.questions} 题）`]));
     }
-    // 一次只加载一个年份：题目多的时候全量拉下来对服务器和手机都不友好
-    for (const item of years) {
-      const value = String(item.year);
-      const btn = el("button", { class: `chip${state.year === value ? " active" : ""}` }, [
-        `${item.year} 年 · ${item.questions} 题`,
-      ]);
-      btn.onclick = () => {
-        state.year = value;
-        localStorage.setItem(YEAR_KEY, value);
-        renderYearChips();
-        loadQuestions();
-      };
-      box.appendChild(btn);
-    }
+    select.value = state.year;
   }
 
-  function renderSubjectChips() {
-    const box = $("#subjectChips");
-    box.innerHTML = "";
-    const items = [["all", "全部科目"], ...Object.entries(ZC.SUBJECTS)];
-    for (const [value, label] of items) {
-      const btn = el("button", { class: `chip${state.subject === value ? " active" : ""}` }, [label]);
-      btn.onclick = () => {
-        state.subject = value;
-        renderSubjectChips();
-        renderQuestions();
-      };
-      box.appendChild(btn);
+  function renderSubjectOptions() {
+    const select = $("#subjectSelect");
+    select.innerHTML = "";
+    select.appendChild(el("option", { value: "" }, ["请选择"]));
+    for (const [key, name] of Object.entries(ZC.SUBJECTS)) {
+      select.appendChild(el("option", { value: key }, [name]));
     }
+    select.value = state.subject;
   }
 
+  /* ---------------------------------------------------------- 题目列表 */
   function visibleQuestions() {
     const kw = state.keyword.trim();
     return state.questions.filter((q) => {
-      if (state.subject !== "all" && q.subject !== state.subject) return false;
+      if (state.subject && q.subject !== state.subject) return false;
       if (kw && !(`${q.year}`.includes(kw) || `${q.question_no}` === kw)) return false;
       return true;
     });
@@ -73,12 +60,17 @@
     const list = visibleQuestions();
     const grid = $("#questionList");
     grid.innerHTML = "";
+    cards.clear();
+    for (const q of state.questions) rememberMeta(q);
+
     const empty = $("#pickEmpty");
     empty.classList.toggle("hidden", list.length > 0);
-    if (!list.length && state.year) {
-      empty.textContent = `${state.year} 年这一组筛选下没有题目（换个年份或把科目切回「全部科目」）。`;
+    if (!state.year) {
+      empty.textContent = state.years.length
+        ? "先在上面选一个真题年份（一次只加载这一年，题目多也不卡）。"
+        : "还没有真题数据，请先在管理后台导入真题 PDF。";
     } else if (!list.length) {
-      empty.textContent = "还没有真题数据，请先在管理后台导入真题 PDF。";
+      empty.textContent = `${state.year} 年这一组筛选下没有题目（换个年份，或把科目切回「请选择」看全部）。`;
     }
 
     const frag = document.createDocumentFragment();
@@ -93,35 +85,135 @@
          <span class="badge ${q.subject}">${ZC.SUBJECTS[q.subject] || q.subject}</span>
          <span class="sub">${q.type === "choice" ? "选择" : "主观"}</span></div>`
       );
-      card.onclick = () => {
-        if (state.selected.has(q.id)) state.selected.delete(q.id);
-        else state.selected.add(q.id);
-        saveSelection();
-        card.classList.toggle("selected");
-        updateBar();
-      };
+      card.onclick = () => toggleQuestion(q.id);
+      cards.set(q.id, card);
       frag.appendChild(card);
     }
     grid.appendChild(frag);
     updateBar();
   }
 
+  function rememberMeta(q) {
+    meta.set(Number(q.id), {
+      year: q.year,
+      question_no: q.question_no,
+      subject: q.subject,
+      type: q.type,
+    });
+  }
+
+  /* ---------------------------------------------------------- 勾选 */
+  function syncCards() {
+    for (const [id, card] of cards) card.classList.toggle("selected", state.selected.has(id));
+  }
+
+  function toggleQuestion(id) {
+    const key = Number(id);
+    if (state.selected.has(key)) state.selected.delete(key);
+    else state.selected.add(key);
+    saveSelection();
+    updateBar();
+  }
+
+  function removeQuestion(id) {
+    if (!state.selected.delete(Number(id))) return;
+    saveSelection();
+    updateBar();
+  }
+
+  function clearSelection() {
+    if (!state.selected.size) return;
+    state.selected.clear();
+    saveSelection();
+    updateBar();
+  }
+
   function updateBar() {
     const count = state.selected.size;
-    $("#selInfo").textContent = `已选 ${count} 题`;
+    const info = $("#selInfo");
+    info.textContent = count ? `已选 ${count} 题（点开可删）` : "已选 0 题";
+    info.classList.toggle("empty", count === 0);
+    info.disabled = count === 0;
     $("#exportBtn").disabled = count === 0;
+    $("#selTitle").textContent = `已选 ${count} 题`;
+    $("#selClear").disabled = count === 0;
+    syncCards();
+    if (selOpen) renderSelList();
+  }
+
+  /* ---------------------------------------------------------- 已选清单面板 */
+  function labelOf(id) {
+    const m = meta.get(Number(id));
+    if (!m) return `题目 #${id}（服务端已经没有这道题了，删掉吧）`;
+    const kind = m.type === "choice" ? "选择题" : "主观题";
+    // 清单里用**全称**（"计算机组成原理"），卡片上那个短名（"计组"）太简略了
+    return `${m.year}年第${m.question_no}题-${ZC.SUBJECT_FULL[m.subject] || m.subject}-${kind}`;
+  }
+
+  /** 每次打开清单都按 id 现取一次：题目可能被管理员改过题号/科目，也可能已经被删了 */
+  async function refreshSelMeta() {
+    const ids = [...state.selected].map(Number);
+    if (!ids.length) return;
+    try {
+      const list = await api(`/api/questions?ids=${ids.join(",")}`);
+      const got = new Set();
+      for (const q of list) {
+        rememberMeta(q);
+        got.add(Number(q.id));
+      }
+      // 服务端没返回的说明题目已经被删除：标成 null，面板里提示用户删掉
+      for (const id of ids) if (!got.has(id)) meta.set(id, null);
+    } catch (err) {
+      toast(`取已选题目失败：${err.message}`, true);
+    }
+  }
+
+  function renderSelList() {
+    const box = $("#selList");
+    box.innerHTML = "";
+    const items = [...state.selected]
+      .map(Number)
+      .map((id) => ({ id, m: meta.get(id) }))
+      .sort((a, b) => {
+        const ay = a.m ? a.m.year : 0;
+        const by = b.m ? b.m.year : 0;
+        if (ay !== by) return ay - by;
+        const an = a.m ? a.m.question_no : a.id;
+        const bn = b.m ? b.m.question_no : b.id;
+        return an - bn;
+      });
+    if (!items.length) {
+      box.appendChild(el("p", { class: "empty" }, ["还没选题目：回上面点题目卡片就行。"]));
+      return;
+    }
+    for (const { id, m } of items) {
+      const rm = el("button", { class: "rm", title: "删掉这一题" }, ["✕"]);
+      rm.onclick = () => removeQuestion(id);
+      box.appendChild(
+        el("div", { class: "sel-item" }, [el("span", { class: "t" }, [labelOf(id)]), rm])
+      );
+    }
+  }
+
+  async function openSelPanel() {
+    if (!state.selected.size) return;
+    selOpen = true;
+    $("#selPanel").classList.remove("hidden");
+    renderSelList(); // 先用本地记下的元数据渲染，不等网络
+    await refreshSelMeta();
+    renderSelList();
+  }
+
+  function closeSelPanel() {
+    selOpen = false;
+    $("#selPanel").classList.add("hidden");
   }
 
   /* ---------------------------------------------------------- 数据 */
   async function loadCatalog() {
     const data = await api("/api/catalog");
     state.years = data.years || [];
-    // 默认选最新的一年（而不是"全部年份"）；记住上次看的那一年
-    const latest = [...state.years].sort((a, b) => b.year - a.year)[0];
-    const remembered = localStorage.getItem(YEAR_KEY);
-    const known = state.years.some((y) => String(y.year) === remembered);
-    state.year = known ? remembered : latest ? String(latest.year) : "";
-    renderYearChips();
+    renderYearOptions();
   }
 
   async function loadQuestions() {
@@ -170,27 +262,47 @@
   }
 
   /* ---------------------------------------------------------- 事件 */
-  $("#selectAll").onclick = () => {
-    visibleQuestions().forEach((q) => state.selected.add(q.id));
-    saveSelection();
+  $("#yearSelect").onchange = (e) => {
+    state.year = e.target.value || "";
+    loadQuestions();
+  };
+  $("#subjectSelect").onchange = (e) => {
+    state.subject = e.target.value || "";
     renderQuestions();
   };
-  $("#clearAll").onclick = () => {
-    state.selected.clear();
+  $("#selectAll").onclick = () => {
+    if (!state.year) {
+      toast("先选一个真题年份");
+      return;
+    }
+    visibleQuestions().forEach((q) => state.selected.add(q.id));
     saveSelection();
-    renderQuestions();
+    updateBar();
+  };
+  $("#clearAll").onclick = () => {
+    clearSelection();
+    toast("已清空已选题目");
   };
   $("#keyword").oninput = (e) => {
     state.keyword = e.target.value;
     renderQuestions();
   };
+  $("#selInfo").onclick = openSelPanel;
+  $("#selClose").onclick = closeSelPanel;
+  $("#selClear").onclick = () => {
+    const count = state.selected.size;
+    clearSelection();
+    toast(`已删除全部 ${count} 题`);
+  };
   $("#exportBtn").onclick = exportBook;
 
   // 登录成功后才会被调用（见 core.js 的登录门）
   ZC.onEnter(async () => {
-    renderSubjectChips();
+    renderSubjectOptions();
+    renderYearOptions();
     await loadCatalog();
-    await loadQuestions();
+    // 进来**不预选**年份/科目，等用户自己选；先把空状态和底栏摆好
+    renderQuestions();
     updateBar();
   });
 })();

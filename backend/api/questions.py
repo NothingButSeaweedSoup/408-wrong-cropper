@@ -105,6 +105,23 @@ def _recrop(conn, paper_row, question_row) -> None:
 
 
 # ---------------------------------------------------------------- 查询
+MAX_IDS = 500  # 一次最多按 id 取这么多题（"已选清单"用，正常远小于这个数）
+
+
+def _parse_ids(raw: str | None) -> list[int] | None:
+    """`ids=3,5,9` -> [3, 5, 9]；没传返回 None（区别于"传了但是空的"）。"""
+    if raw is None:
+        return None
+    out: list[int] = []
+    for piece in raw.split(","):
+        piece = piece.strip()
+        if piece.isdigit():
+            value = int(piece)
+            if value not in out:
+                out.append(value)
+    return out[:MAX_IDS]
+
+
 @router.get("/questions")
 def list_questions(
     paper_id: int | None = None,
@@ -112,7 +129,22 @@ def list_questions(
     subject: str | None = Query(None, pattern="^(ds|co|os|cn)$"),
     type: str | None = Query(None, pattern="^(choice|subjective)$"),
     keyword: str | None = None,
+    ids: str | None = Query(None, description="只看这些题目 id，逗号分隔（用户端「已选清单」用）"),
 ):
+    wanted = _parse_ids(ids)
+    if wanted is not None:
+        # 按 id 精确取：勾选可能跨年份，而且这个清单随勾选一直在变，缓存没意义，直接查库。
+        if not wanted:
+            return []
+        marks = ",".join("?" * len(wanted))
+        sql = (
+            "SELECT q.*, p.year AS year FROM questions q JOIN papers p ON p.id = q.paper_id"
+            f" WHERE q.id IN ({marks}) ORDER BY p.year DESC, q.order_no"
+        )
+        with db.get_conn() as conn:
+            rows = conn.execute(sql, wanted).fetchall()
+        return [common.question_out(r, int(r["year"])) for r in rows]
+
     key = (paper_id, year, subject, type, keyword)
     cached = _cache_get(key)
     if cached is not None:

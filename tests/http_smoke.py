@@ -361,6 +361,21 @@ def main() -> int:
     public_qs = call("GET", "/api/questions?year=2009", key="", token=user_token)
     check("登录后能读题目列表", len(public_qs) >= 5, str(len(public_qs)))
 
+    # 3.5) 「已选清单」按 id 取题：勾选可以跨年份，所以不能按年份过滤
+    picked_ids = [q["id"] for q in questions[:3]]
+    by_ids = call("GET", f"/api/questions?ids={','.join(str(i) for i in picked_ids)}", key="", token=user_token)
+    check("按 ids 精确取题（已选清单用）",
+          sorted(q["id"] for q in by_ids) == sorted(picked_ids), str([q["id"] for q in by_ids]))
+    check("按 ids 取的题目带年份/科目/题型（清单文本要用）",
+          all(q.get("year") and q.get("subject") and q.get("type") for q in by_ids),
+          str(by_ids[0])[:120] if by_ids else "空")
+    check("ids 传空 -> 空数组（不能把 IN () 丢给 SQLite）",
+          call("GET", "/api/questions?ids=", key="", token=user_token) == [], "")
+    check("ids 全是垃圾 -> 空数组",
+          call("GET", "/api/questions?ids=abc,,%20", key="", token=user_token) == [], "")
+    check("不存在的 id -> 空数组（不是 500）",
+          call("GET", "/api/questions?ids=99999999", key="", token=user_token) == [], "")
+
     print("\n4) 图片接口")
     status, headers, body = call("GET", f"/api/papers/{paper_id}/pages/1", binary=True)
     check("页面图 image/png（管理接口）", status == 200 and headers.get("Content-Type", "").startswith("image/png"),

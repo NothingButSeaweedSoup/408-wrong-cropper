@@ -37,9 +37,20 @@
     <!-- 选错题 -->
     <section id="view-pick" class="view">
       <div class="filters">
-        <div class="hint">先选年份（一次只加载这一年，题目多也不卡）</div>
-        <div class="chip-row" id="yearChips"></div>
-        <div class="chip-row" id="subjectChips"></div>
+        <div class="row pick-row">
+          <label class="pick-field">
+            <span class="pick-label">真题年份</span>
+            <select id="yearSelect" class="input">
+              <option value="">请选择</option>
+            </select>
+          </label>
+          <label class="pick-field">
+            <span class="pick-label">科目</span>
+            <select id="subjectSelect" class="input">
+              <option value="">请选择</option>
+            </select>
+          </label>
+        </div>
         <div class="row">
           <input id="keyword" class="input" type="search" placeholder="搜索年份 / 题号" />
           <button id="selectAll" class="btn ghost">全选当前</button>
@@ -97,12 +108,24 @@
   </main>
 
   <footer class="bottombar">
-    <span id="selInfo">已选 0 题</span>
+    <button id="selInfo" class="sel-info empty">已选 0 题</button>
     <button id="exportBtn" class="btn primary" disabled>生成 Word 错题本</button>
   </footer>
 </div>
 
 <div id="toast" class="toast hidden"></div>
+
+<!-- 已选题目清单：点底栏「已选 n 题」弹出，可逐条删除 / 一键删除 -->
+<div id="selPanel" class="dl-panel hidden">
+  <div class="dl-head">
+    <strong id="selTitle">已选 0 题</strong>
+    <span class="spacer"></span>
+    <button id="selClear" class="btn tiny danger" disabled>一键删除</button>
+    <button id="selClose" class="btn tiny ghost">关闭</button>
+  </div>
+  <div id="selList" class="sel-list"></div>
+  <p class="hint" id="selHint">勾选**跨年份**累计；导出时按年份、题号排序。点每条右边的 ✕ 删掉这一题。</p>
+</div>
 
 <!-- 下载链接面板：手机端（WebView / 手机浏览器）下载最不靠谱，干脆把临时链接给你复制 -->
 <div id="dlPanel" class="dl-panel hidden">

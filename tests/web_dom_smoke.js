@@ -252,9 +252,19 @@ function makeFetch(state) {
       if (pathOnly === "/api/catalog")
         return json({ years: state.catalogYears || [{ year: 2009, papers: 1, questions: 2 }] });
       if (pathOnly === "/api/questions") {
-        return json([
+        const query = String(url).split("?")[1] || "";
+        const params = new URLSearchParams(query);
+        let all = state.questions || [
           { id: 1, year: 2009, question_no: 1, subject: "ds", type: "choice", image_urls: ["/api/questions/1/images/0"] },
-        ]);
+        ];
+        const year = params.get("year");
+        if (year) all = all.filter((q) => String(q.year) === year);
+        const ids = params.get("ids");
+        if (ids) {
+          const wanted = ids.split(",");
+          all = all.filter((q) => wanted.includes(String(q.id)));
+        }
+        return json(all);
       }
       if (pathOnly === "/api/scores/schema") {
         // 需要按年份给不同结构时用 state.schemasByYear（换年份的表单测试）
@@ -299,6 +309,12 @@ async function main() {
       subjective: [{ qno: 41, subject: "ds", name: "数据结构", full: 10 }],
       module_full: { ds: 45, co: 45, os: 35, cn: 25, total: 150 },
     },
+    // 题目：2009 两道（一道选择一道主观）、2010 一道，用来测跨年份勾选与已选清单
+    questions: [
+      { id: 1, year: 2009, question_no: 1, subject: "ds", type: "choice", image_urls: ["/api/questions/1/images/0"] },
+      { id: 2, year: 2009, question_no: 41, subject: "ds", type: "subjective", image_urls: ["/api/questions/2/images/0"] },
+      { id: 3, year: 2010, question_no: 10, subject: "co", type: "choice", image_urls: ["/api/questions/3/images/0"] },
+    ],
     records: [
       {
         id: 1, paper_year: 2009, practice_date: "2026-09-19", total_score: 112, total_full: 150, total_rate: 74.7,
@@ -408,11 +424,89 @@ async function main() {
   check("登录后 #gate 隐藏", byId.gate.classList.contains("hidden"));
   check("登录后 #shell 显示", !byId.shell.classList.contains("hidden"));
   check("登录后取了目录 /api/catalog", fake.calls.includes("GET /api/catalog"), fake.calls.join(" | "));
-  check("题目只拉了默认那一年（不一次性拉全部）",
-        fake.calls.includes("GET /api/questions?year=2009") && !fake.calls.includes("GET /api/questions"),
-        fake.calls.join(" | "));
-  check("选错题页渲染出卡片", byId.questionList.children.length > 0, `${byId.questionList.children.length} 个`);
-  check("年份 chips 里没有「全部年份」", !textOf(byId.yearChips).includes("全部年份"), textOf(byId.yearChips));
+  check("进入时**不预选**年份/科目：两个下拉都是「请选择」",
+        byId.yearSelect.value === "" && byId.subjectSelect.value === "" &&
+          textOf(byId.yearSelect).includes("请选择") && textOf(byId.subjectSelect).includes("请选择"),
+        `年=${byId.yearSelect.value} 科=${byId.subjectSelect.value}`);
+  check("没选年份就不拉题目（不一次性拉全库）",
+        !fake.calls.some((c) => c.startsWith("GET /api/questions")), fake.calls.join(" | "));
+  check("没选年份时题目列表是空的，并提示先选年份",
+        byId.questionList.children.length === 0 && textOf(byId.pickEmpty).includes("选一个真题年份"),
+        textOf(byId.pickEmpty));
+
+  console.log("\n2a) 选年份 -> 才加载那一年的题目");
+  byId.yearSelect.value = "2009";
+  byId.yearSelect.fire("change");
+  await tick();
+  await tick();
+  check("按年份要题目", fake.calls.includes("GET /api/questions?year=2009"), fake.calls.slice(-3).join(" | "));
+  check("还是没拉全库", !fake.calls.includes("GET /api/questions"), fake.calls.join(" | "));
+  check("渲染出 2009 的两道题", byId.questionList.children.length === 2, `${byId.questionList.children.length} 个`);
+  check("年份下拉里没有「全部年份」", !textOf(byId.yearSelect).includes("全部年份"), textOf(byId.yearSelect));
+
+  console.log("\n2b) 点底栏「已选 n 题」能看清单、逐条删、一键删除");
+  byId.questionList.children[0].click();
+  byId.questionList.children[1].click();
+  await tick();
+  check("底栏数字跟着涨", String(byId.selInfo.textContent).includes("已选 2 题"), byId.selInfo.textContent);
+  check("有选中就能导出了", byId.exportBtn.disabled === false);
+  byId.selInfo.click();
+  await tick();
+  await tick();
+  check("弹出已选清单面板", !byId.selPanel.classList.contains("hidden"), byId.selPanel.className);
+  check("清单按 id 现取题目（题目可能被管理员改过/删了）",
+        fake.calls.some((c) => c.startsWith("GET /api/questions?ids=")), fake.calls.slice(-3).join(" | "));
+  let selText = squash(textOf(byId.selList));
+  check("清单是「年份第N题-科目-题型」文本",
+        selText.includes("2009年第1题-数据结构-选择题") && selText.includes("2009年第41题-数据结构-主观题"), selText);
+  check("面板标题写了数量", String(byId.selTitle.textContent).includes("已选 2 题"), byId.selTitle.textContent);
+
+  const rmBtns = [];
+  const walkRm = (node) => {
+    for (const child of node.children || []) {
+      if (String(child.className).includes("rm")) rmBtns.push(child);
+      walkRm(child);
+    }
+  };
+  walkRm(byId.selList);
+  check("每条都带一个删除按钮", rmBtns.length === 2, `${rmBtns.length} 个`);
+  rmBtns[0].click();
+  await tick();
+  check("逐条删：删掉第 1 条后只剩 1 题", String(byId.selTitle.textContent).includes("已选 1 题"),
+        byId.selTitle.textContent);
+  check("删掉的那题不再是选中态", !byId.questionList.children[0].classList.contains("selected"));
+
+  // 跨年份勾选：切到 2010 再选一道，两条都要在清单里
+  byId.yearSelect.value = "2010";
+  byId.yearSelect.fire("change");
+  await tick();
+  await tick();
+  check("切到 2010 只拉了 2010 那一年", fake.calls.includes("GET /api/questions?year=2010"), fake.calls.slice(-3).join(" | "));
+  byId.questionList.children[0].click();
+  await tick();
+  byId.selInfo.click();
+  await tick();
+  await tick();
+  selText = squash(textOf(byId.selList));
+  check("跨年份的题目都在清单里，且按年份排",
+        selText.includes("2009年第41题-数据结构-主观题") && selText.includes("2010年第10题-计算机组成原理-选择题"),
+        selText);
+  check("清单正好两条", (selText.match(/第\d+题-/g) || []).length === 2, selText);
+
+  byId.selClear.click();
+  await tick();
+  check("一键删除：全清空、导出按钮禁用",
+        String(byId.selTitle.textContent).includes("已选 0 题") && byId.exportBtn.disabled === true,
+        `${byId.selTitle.textContent} / disabled=${byId.exportBtn.disabled}`);
+  check("清空后清单给空提示", textOf(byId.selList).includes("还没选题目"), textOf(byId.selList));
+  byId.selClose.click();
+  check("「关闭」收起面板", byId.selPanel.classList.contains("hidden"), byId.selPanel.className);
+
+  // 回到 2009，后面的导出用例要用
+  byId.yearSelect.value = "2009";
+  byId.yearSelect.fire("change");
+  await tick();
+  await tick();
 
   console.log("\n3) 点击「得分」Tab（之前就是这里没反应）");
   const scoreTab = byClass.tab.find((t) => t.dataset.view === "scores");
