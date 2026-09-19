@@ -266,6 +266,10 @@ os_score / cn_score / detail_json（录入口径 + 三处明细 + 当时的满�
 - `GET /api/scores/schema?year=&paper_id=` 表单结构（该试卷的结构 → 没导入试卷时退回默认，看 `source`）
 - 录入表单的**年份是下拉选**（列出有真题的年份，见 `web/scores.js` 的 `buildForm`），
   一年真题都没导入时才退回手填数字；换年份会重新取该年的卷面结构并重建表单。
+  **换年份时只把「得分」带过去，「满分」一律用新年份结构里的**（`collectScores()` 而不是
+  `collectSubjective()`）：满分是那份卷子的属性，带过去就会变成"换到哪一年，主观题满分都还是
+  上一年那一套"（真实踩过，`web_dom_smoke.js` 第 4e 段专门盯这个）。带过去的得分会按新年份
+  的满分夹一下，免得出现"得分 > 满分"被后端拒。
 - `POST /api/scores` 录入（算分后入库，返回带 `rates`/`total_rate` 的记录）
 - `GET /api/scores` 列表（按做题时间倒序）
 - `PUT /api/scores/{id}` / `DELETE /api/scores/{id}` 改（重算）/ 删
@@ -598,6 +602,10 @@ node --check web\scores.js                           # 前端改动后至少过�
   **`URL` / `location.origin` 也踩过**：`vm.createContext()` 里没有 `URL`（它不是 ECMAScript 内建），
   `location` 也只是个裸对象——`core.js` 换临时下载链接时 `new URL(url, location.origin)` 会直接抛错，
   表现为「票要到了、但 location.href 没变」这种莫名其妙的 FAIL。脚手架里补上 `URL` 和 `origin` 即可。
+  **`value` 属性也要镜像到 `.value`**：真浏览器里 `<input value="10">` 的 value **属性**会反映到
+  `.value` **属性值**上（dirty flag 未置位时）；迷你 DOM 不镜像的话，`el("input", {value: 10})` 建出来的框
+  `.value` 是 `""`，`recalc()` 读到 0，于是出现「输入框里明明是 10，小计却是 0」的假失败。
+  现在 `setAttribute("value", ...)` 会同步写 `.value`。
 - 用户端关键入口（登录门 → 得分 Tab → 「录入成绩」→ 生成 Word）都在这个测试里断言过，别再漏。
 - **录入表单的「实时总分」曾经只加了客观题**（`compute()` 漏了遍历主观题输入框），主观题白填；
   保存后后端算的分一直是对的，只有表单上那个数字少了一截（用户就是这么发现的）。

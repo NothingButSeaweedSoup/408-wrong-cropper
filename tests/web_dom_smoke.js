@@ -100,6 +100,10 @@ class Element extends Node {
     this.attributes[name] = String(value);
     if (name === "class") this.className = value;
     if (name.startsWith("data-")) this.dataset[name.slice(5).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = String(value);
+    // 真浏览器里 <input value="10"> 的 **属性** 会反映到 .value **属性值** 上（dirty flag 未置位时）。
+    // 迷你 DOM 不镜像的话，前端 el("input", {value: 10}) 建出来的框 .value 会是 ""，
+    // 于是 recalc() 读到 0，出现"满分明明是 10，小计却是 0"这种假失败。
+    if (name === "value") this.value = String(value);
   }
   getAttribute(name) {
     return this.attributes[name] ?? null;
@@ -252,7 +256,12 @@ function makeFetch(state) {
           { id: 1, year: 2009, question_no: 1, subject: "ds", type: "choice", image_urls: ["/api/questions/1/images/0"] },
         ]);
       }
-      if (pathOnly === "/api/scores/schema") return json(state.schema);
+      if (pathOnly === "/api/scores/schema") {
+        // 需要按年份给不同结构时用 state.schemasByYear（换年份的表单测试）
+        const query = String(url).split("?")[1] || "";
+        const year = Number(new URLSearchParams(query).get("year"));
+        return json((state.schemasByYear || {})[year] || state.schema);
+      }
       if (pathOnly === "/api/scores") {
         return method === "POST" ? json({ total_score: 112, total_full: 150 }) : json(state.records);
       }
@@ -506,6 +515,121 @@ async function main() {
   const totalsZero = squash(textOf(byId.recordForm));
   check("主观题得 0 分时总分跟着掉到 35",
         totalsZero.includes("主观小计0/120%") && totalsZero.includes("总分35/4774%"), totalsZero.slice(-140));
+
+  console.log("\n4d) 综合题满分必须**逐题**取结构里的值（40 分那年的真实分布）");
+  /* 真实卷面 41-47 的满分是 10/15/8/13/7/8/9，各不相同。
+     曾经担心过「所有主观题满分显示成同一个数」这种按科目/全局取默认值的写法，
+     所以这里专门断言每一行的满分输入框各自拿到自己那一题的值。 */
+  const realFulls = [10, 15, 8, 13, 7, 8, 9];
+  state.schema = {
+    ...state.schema,
+    source: "paper",
+    paper_title: "2009 年真题",
+    choice_groups: [
+      { subject: "ds", name: "数据结构", from: 1, to: 10, count: 10, per_score: 2, full: 20 },
+      { subject: "co", name: "计算机组成原理", from: 11, to: 20, count: 10, per_score: 2, full: 20 },
+    ],
+    subjective: realFulls.map((full, i) => ({
+      qno: 41 + i,
+      subject: ["ds", "ds", "co", "co", "os", "os", "cn"][i],
+      name: "x",
+      full,
+    })),
+    module_full: { ds: 45, co: 45, os: 35, cn: 25, total: 150 },
+  };
+  byId.newRecord.click();
+  await tick();
+  await tick();
+  const nums2 = [];
+  const walk2 = (node) => {
+    for (const child of node.children || []) {
+      if (child.tagName === "INPUT" && child.attributes.type === "number") nums2.push(child);
+      walk2(child);
+    }
+  };
+  walk2(byId.recordForm);
+  // 前 2 个是选择题答对数，之后每题一对（得分, 满分）
+  const fullValues = realFulls.map((_, i) => Number(nums2[3 + i * 2].value));
+  check("7 道综合题的满分输入框各不相同（按结构逐题取）",
+        JSON.stringify(fullValues) === JSON.stringify(realFulls),
+        `结构=${JSON.stringify(realFulls)} 表单=${JSON.stringify(fullValues)}`);
+  const qnoHits = textOf(byId.recordForm).match(/第 \d+ 题/g) || [];
+  check("7 道综合题都渲染出来了", qnoHits.length === 7, qnoHits.join("/"));
+  const totalsReal = squash(textOf(byId.recordForm));
+  // 客观 40 + 主观 70 = 110 满分；一道没填就是 0 分
+  check("主观题小计 = 0 / 70", totalsReal.includes("主观小计0/700%"), totalsReal.slice(-140));
+  check("总分满分 = 40 + 70 = 110", totalsReal.includes("总分0/1100%"), totalsReal.slice(-140));
+
+  console.log("\n4e) 换年份后主观题满分必须换成新年份那一套（曾经一直沿用上一年的）");
+  const schema2010 = { ...state.schema, year: 2010 };
+  const schema2011 = {
+    ...state.schema,
+    year: 2011,
+    paper_title: "2011 年真题",
+    subjective: [10, 13, 11, 12, 8, 7, 9].map((full, i) => ({
+      qno: 41 + i,
+      subject: ["ds", "ds", "co", "co", "os", "os", "cn"][i],
+      name: "x",
+      full,
+    })),
+    module_full: { ds: 45, co: 45, os: 35, cn: 25, total: 150 },
+  };
+  state.schemasByYear = { 2010: schema2010, 2011: schema2011 };
+  state.catalogYears = [{ year: 2010, papers: 1, questions: 40 }, { year: 2011, papers: 1, questions: 40 }];
+  byClass.tab.find((t) => t.dataset.view === "pick").click();
+  byClass.tab.find((t) => t.dataset.view === "scores").click();
+  await tick();
+  await tick();
+  fake.calls.push("--- 换年份 ---");
+  byId.newRecord.click();
+  await tick();
+  await tick();
+  const nums3 = [];
+  const walk3 = (node) => {
+    for (const child of node.children || []) {
+      if (child.tagName === "INPUT" && child.attributes.type === "number") nums3.push(child);
+      walk3(child);
+    }
+  };
+  walk3(byId.recordForm);
+  check("表单先是 2010 年那一套满分",
+        nums3[3].value === "10" && nums3[5].value === "15", `${nums3[3].value}/${nums3[5].value}`);
+  nums3[2].value = "8"; // 第 41 题得分
+  nums3[2].fire("input");
+  nums3[4].value = "20"; // 第 42 题得分（超 2011 年的 13，应该被夹到 13）
+  nums3[4].fire("input");
+  const yearSelect = (() => {
+    let found = null;
+    const walk = (node) => {
+      for (const child of node.children || []) {
+        if (child.tagName === "SELECT") found = found || child;
+        walk(child);
+      }
+    };
+    walk(byId.recordForm);
+    return found;
+  })();
+  check("年份下拉里有 2011", yearSelect.children.some((o) => String(o.attributes.value) === "2011"),
+        yearSelect.children.map((o) => o.attributes.value).join("/"));
+  yearSelect.value = "2011";
+  yearSelect.fire("change");
+  await tick();
+  await tick();
+  check("换年份按新年份要了结构", fake.calls.includes("GET /api/scores/schema?year=2011"), fake.calls.slice(-4).join(" | "));
+  const nums4 = [];
+  const walk4 = (node) => {
+    for (const child of node.children || []) {
+      if (child.tagName === "INPUT" && child.attributes.type === "number") nums4.push(child);
+      walk4(child);
+    }
+  };
+  walk4(byId.recordForm);
+  const fulls2011 = [10, 13, 11, 12, 8, 7, 9].map((_, i) => Number(nums4[3 + i * 2].value));
+  check("满分换成了 2011 年那一套",
+        JSON.stringify(fulls2011) === JSON.stringify([10, 13, 11, 12, 8, 7, 9]),
+        JSON.stringify(fulls2011));
+  check("已经填的得分跟着带过来（41 题 8 分）", Number(nums4[2].value) === 8, nums4[2].value);
+  check("得分超过新年份满分时被夹住（42 题 20 → 13）", Number(nums4[4].value) === 13, nums4[4].value);
 
   console.log("\n5) 生成 Word（导出记录已经去掉，生成完直接下载）");
   check("Tab 里没有「导出记录」了", !byClass.tab.some((t) => t.dataset.view === "history"),

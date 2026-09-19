@@ -62,7 +62,8 @@
     box.classList.remove("hidden");
     if (!draft) state.editingId = record ? record.id : null;
 
-    const schema = (record && schemaFromRecord(record)) || state.schema;
+    const schema0 = (record && schemaFromRecord(record)) || state.schema;
+    let schema = schema0;
     const input = draft || (record && record.detail && record.detail.input) || {};
     const choices = input.choice || {};
     const subjective = input.subjective || {};
@@ -127,8 +128,12 @@
     const subjBox = el("div", { class: "form-block" }, [el("h3", {}, ["综合题（填得分，满分默认按当年试卷）"])]);
     for (const item of schema.subjective) {
       const stored = subjective[String(item.qno)] || {};
-      const fullInput = numberInput(stored.full ?? item.full, { min: 0, max: 50, step: 0.5, oninput: () => recalc() });
-      const scoreInput = numberInput(stored.score ?? 0, { min: 0, max: 50, step: 0.5, oninput: () => recalc() });
+      // 满分是**这份卷子**的属性：只有"编辑已有记录/带着草稿重建"时才用带过来的值，
+      // 否则一律用结构里的（换年份必须换成新年份的分值，见 changeYear）。
+      const fullValue = stored.full ?? item.full;
+      const scoreValue = Math.min(Math.max(0, Number(stored.score) || 0), Math.max(0, Number(fullValue) || 0));
+      const fullInput = numberInput(fullValue, { min: 0, max: 50, step: 0.5, oninput: () => recalc() });
+      const scoreInput = numberInput(scoreValue, { min: 0, max: 50, step: 0.5, oninput: () => recalc() });
       refs.subjective[item.qno] = { item, score: scoreInput, full: fullInput };
       subjBox.appendChild(
         el("div", { class: "form-row tight" }, [
@@ -313,7 +318,9 @@
         const next = await fetchSchema(year, null);
         state.schema = next;
         if (sameShape(next, schema)) {
-          schema.year = year;
+          // 结构一模一样就不用重建表单（免得清掉用户填的内容），
+          // 但年份/试卷 id 得换成新年份那份，保存时才不会写错卷子。
+          schema = next;
           return;
         }
         const draft2 = {
@@ -321,7 +328,9 @@
           practice_date: dateInput.value || today(),
           note: noteInput.value,
           choice: collectChoice(refs),
-          subjective: collectSubjective(refs),
+          // **只带走「得分」，不带走「满分」**：满分是那份卷子的结构，换年份就得换成新年份的，
+          // 否则换到哪一年主观题满分都还是上一年的那一套（曾经就是这个 bug）。
+          subjective: collectScores(refs),
         };
         buildForm(record, draft2);
       } catch (err) {
@@ -342,6 +351,15 @@
       const out = {};
       for (const [qno, ref] of Object.entries(refsIn.subjective)) {
         out[qno] = { score: Math.max(0, Number(ref.score.value) || 0), full: Math.max(0, Number(ref.full.value) || 0) };
+      }
+      return out;
+    }
+
+    /** 只取综合题的**得分**（换年份重建表单时用：满分要跟着新年份的结构走） */
+    function collectScores(refsIn) {
+      const out = {};
+      for (const [qno, ref] of Object.entries(refsIn.subjective)) {
+        out[qno] = { score: Math.max(0, Number(ref.score.value) || 0) };
       }
       return out;
     }
@@ -380,13 +398,14 @@
     box.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  /* 结构有没有变（变了才需要重建表单，否则用户填一半被清空很烦） */
+  /* 结构有没有变（变了才需要重建表单，否则用户填一半被清空很烦）。
+     主观题连科目一起比：题号/满分相同但科目换了也得重建。 */
   function sameShape(a, b) {
     if (!a || !b) return false;
     const pack = (s) =>
       JSON.stringify([
         s.choice_groups.map((g) => [g.subject, g.from, g.to, g.per_score]),
-        s.subjective.map((i) => [i.qno, i.full]),
+        s.subjective.map((i) => [i.qno, i.subject, i.full]),
       ]);
     return pack(a) === pack(b);
   }
