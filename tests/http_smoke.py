@@ -419,6 +419,10 @@ def main() -> int:
     print("\n8) 静态资源")
     status, _h, index = call("GET", "/", binary=True, key="")
     check("用户端 H5 可访问", status == 200 and "408 错题本" in index.decode("utf-8"))
+    index_html = index.decode("utf-8")
+    check("首页给 js/css 打了版本戳（文件一改 URL 就变，旧缓存必然失效）",
+          "scores.js?v=" in index_html and "core.js?v=" in index_html and "style.css?v=" in index_html,
+          " ".join(part for part in index_html.split() if "?v=" in part)[:120])
     status, _h, js = call("GET", "/app.js", binary=True, key="")
     check("app.js 可访问", status == 200 and len(js) > 3000, f"{len(js)}B")
     status, headers, scores_js = call("GET", "/scores.js", binary=True, key="")

@@ -11,10 +11,12 @@
 
 from __future__ import annotations
 
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, auth, config, db
@@ -138,4 +140,31 @@ def catalog():
 # 静态资源放最后挂载：先匹配 /api/*，再兜底到静态文件
 if config.ADMIN_DIST_DIR.exists():
     app.mount("/admin", StaticFiles(directory=config.ADMIN_DIST_DIR, html=True), name="admin")
+
+
+# 用户端是无构建的（改 web/*.js 直接生效），没有构建产物哈希可用。
+# 光靠 no-cache 还不够：已经缓存过的旧副本（尤其是安卓 WebView）不一定肯回源，
+# 结果是"服务端明明改了，用户看到的还是旧表单"。所以首页把 js/css 的 URL 带上文件 mtime，
+# 文件一改 URL 就变，浏览器只能重新拉。
+_ASSET_RE = re.compile(r'(href|src)="/([^"?]+\.(?:js|css))"')
+
+
+def stamp_static_urls(html: str) -> str:
+    def replace(match: re.Match) -> str:
+        attr, name = match.group(1), match.group(2)
+        try:
+            stamp = int((config.WEB_DIR / name).stat().st_mtime)
+        except OSError:
+            return match.group(0)
+        return f'{attr}="/{name}?v={stamp}"'
+
+    return _ASSET_RE.sub(replace, html)
+
+
+@app.get("/", include_in_schema=False)
+def web_index():
+    html = (config.WEB_DIR / "index.html").read_text(encoding="utf-8")
+    return HTMLResponse(stamp_static_urls(html), headers={"Cache-Control": "no-cache, must-revalidate"})
+
+
 app.mount("/", StaticFiles(directory=config.WEB_DIR, html=True), name="web")

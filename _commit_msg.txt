@@ -1,0 +1,7 @@
+首页给 js/css 打版本戳（?v=mtime）：旧缓存必然失效
+
+- 只靠 no-cache 不够：浏览器/安卓 WebView 里已经缓存过的旧副本（没有 no-cache 的那份）
+  不一定肯回源，于是出现「服务端明明是新文件、用户看到的还是旧表单」这种反复
+- 现在 GET / 由后端渲染 index.html，把 /core.js、/scores.js 等换成 ?v=<文件 mtime>：
+  文件一改 URL 就变，客户端只能重新拉；首页本身也带 no-cache
+- http_smoke 增加「首页带版本戳」断言
