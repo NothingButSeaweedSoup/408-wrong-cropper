@@ -5,11 +5,11 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from .. import config, db, tasks
-from ..services import pipeline
+from ..services import paper_structure, pipeline
 from . import common
 
 router = APIRouter(prefix="/api/papers", tags=["papers"])
@@ -118,6 +118,42 @@ def reprocess(paper_id: int):
     pipeline.set_status(paper_id, "rendering", 1, "已排队…")
     tasks.submit(pipeline.process_paper, paper_id)
     return {"ok": True, "paper_id": paper_id}
+
+
+# ------------------------------------------------------- 卷面结构（管理员）
+# 各年 408 的题号范围与分值并不一样（DS 选择题某些年 10 题、综合题分值年年不同），
+# 所以结构是「这份试卷」的属性，录入成绩的表单与算分都按它来。
+@router.get("/{paper_id}/structure")
+def get_structure(paper_id: int):
+    with db.get_conn() as conn:
+        structure = paper_structure.of_paper(conn, paper_id)
+    if structure is None:
+        raise HTTPException(404, "真题不存在或还没有题目")
+    return {**structure, "module_full": paper_structure.module_full_total(structure)}
+
+
+@router.put("/{paper_id}/structure")
+def put_structure(paper_id: int, payload: dict = Body(...)):
+    """保存管理员改过的结构（`source` 标成 manual；重跑流水线时会被自动推导覆盖）。"""
+    with db.get_conn() as conn:
+        if conn.execute("SELECT 1 FROM papers WHERE id=?", (paper_id,)).fetchone() is None:
+            raise HTTPException(404, "真题不存在")
+        try:
+            saved = paper_structure.save(conn, paper_id, payload, source="manual")
+        except paper_structure.StructureError as exc:
+            raise HTTPException(400, str(exc)) from None
+    return {**saved, "module_full": paper_structure.module_full_total(saved)}
+
+
+@router.post("/{paper_id}/structure/rebuild")
+def rebuild_structure(paper_id: int):
+    """按当前题目表重新推导（管理员改过题号/科目/分值后用）。"""
+    with db.get_conn() as conn:
+        try:
+            saved = paper_structure.rebuild(conn, paper_id)
+        except paper_structure.StructureError as exc:
+            raise HTTPException(400, str(exc)) from None
+    return {**saved, "module_full": paper_structure.module_full_total(saved)}
 
 
 @router.delete("/{paper_id}")

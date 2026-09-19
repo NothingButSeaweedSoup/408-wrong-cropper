@@ -26,24 +26,55 @@
     return list;
   }
 
-  function buildForm(record = null) {
+  /* 结构来自那份试卷（各年题号范围/分值不一样）；编辑老记录时用**记录自己**的快照，
+     这样后来改了试卷结构也不会把老记录重新解释一遍。 */
+  async function fetchSchema(year, paperId) {
+    const query = paperId ? `?paper_id=${paperId}` : year ? `?year=${year}` : "";
+    return mapSchema(await api(`/api/scores/schema${query}`), year);
+  }
+
+  function mapSchema(raw, year) {
+    return { ...raw, year: raw.year ?? year ?? null };
+  }
+
+  function schemaFromRecord(record) {
+    const breakdown = (record.detail && record.detail.breakdown) || {};
+    if (!breakdown.choice || !breakdown.subjective) return null;
+    return {
+      year: record.paper_year,
+      source: (record.detail && record.detail.schema_source) || "record",
+      paper_id: (record.detail && record.detail.paper_id) || null,
+      paper_title: "",
+      choice_groups: breakdown.choice.map((g) => ({
+        subject: g.subject, name: g.name, from: g.from, to: g.to,
+        count: g.count, per_score: g.per_score, full: g.full,
+      })),
+      subjective: breakdown.subjective.map((s) => ({
+        qno: s.qno, subject: s.subject, name: s.name, full: s.full,
+      })),
+      module_full: record.module_full || { ds: 45, co: 45, os: 35, cn: 25, total: 150 },
+    };
+  }
+
+  function buildForm(record = null, draft = null) {
     const box = $("#recordForm");
     box.innerHTML = "";
     box.classList.remove("hidden");
-    state.editingId = record ? record.id : null;
+    if (!draft) state.editingId = record ? record.id : null;
 
-    const input = (record && record.detail && record.detail.input) || {};
+    const schema = (record && schemaFromRecord(record)) || state.schema;
+    const input = draft || (record && record.detail && record.detail.input) || {};
     const choices = input.choice || {};
     const subjective = input.subjective || {};
     const refs = { choice: {}, subjective: {} };
 
-    const yearInput = numberInput(record ? record.paper_year : state.years[0]?.year || new Date().getFullYear() - 17, {
-      min: 1990,
-      max: 2100,
-    });
+    const yearInput = numberInput(
+      (draft && draft.paper_year) || (record ? record.paper_year : state.years[0]?.year) || new Date().getFullYear() - 17,
+      { min: 1990, max: 2100 }
+    );
     yearInput.setAttribute("list", "yearList");
     yearInput.classList.add("sm");
-    const dateInput = el("input", { type: "date", class: "input sm", value: (record && record.practice_date) || today() });
+    const dateInput = el("input", { type: "date", class: "input sm", value: (record && record.practice_date) || input.practice_date || today() });
 
     const head = el("div", { class: "form-row" }, [
       el("label", {}, ["真题年份", yearInput]),
@@ -51,18 +82,27 @@
     ]);
 
     /* 选择题：填答对个数 */
-    const choiceBox = el("div", { class: "form-block" }, [
-      el("h3", {}, [`选择题（每题 ${state.schema.choice_groups[0].per_score} 分，填答对个数）`]),
-    ]);
-    for (const group of state.schema.choice_groups) {
-      const value = Number(choices[group.subject] ?? 0);
+    const choiceBox = el("div", { class: "form-block" }, [el("h3", {}, ["选择题（填答对个数）"])]);
+    if (schema.source === "default") {
+      choiceBox.appendChild(
+        el("p", { class: "hint" }, [
+          "该年份还没导入真题试卷，用的是默认卷面结构（1-11 / 12-22 / 23-32 / 33-40，每题 2 分）；" +
+            "导入真题后会自动按那份卷子的结构算分。",
+        ])
+      );
+    } else if (schema.paper_title) {
+      choiceBox.appendChild(el("p", { class: "hint" }, [`卷面结构来自：${schema.paper_title}`]));
+    }
+    for (const group of schema.choice_groups) {
+      const key = group.key || `g${group.from}`;
+      const value = Number(choices[key] ?? choices[group.subject] ?? 0);
       const scoreCell = el("span", { class: "score-cell" }, ["—"]);
       const inputEl = numberInput(value, { min: 0, max: group.count, oninput: () => recalc() });
-      refs.choice[group.subject] = { group, input: inputEl, cell: scoreCell };
+      refs.choice[key] = { group, key, input: inputEl, cell: scoreCell };
       choiceBox.appendChild(
         el("div", { class: "form-row tight" }, [
           el("span", { class: "label" }, [`${group.name} ${group.from}-${group.to}`]),
-          el("span", { class: "hint" }, [`共 ${group.count} 题 / ${group.full} 分`]),
+          el("span", { class: "hint" }, [`共 ${group.count} 题 / 每题 ${group.per_score} 分`]),
           inputEl,
           el("span", { class: "hint" }, [`/ ${group.count}`]),
           scoreCell,
@@ -71,11 +111,11 @@
     }
 
     /* 综合题：逐题填得分与满分 */
-    const subjBox = el("div", { class: "form-block" }, [el("h3", {}, ["综合题（填得分，满分可按当年试卷改）"])]);
-    for (const item of state.schema.subjective) {
+    const subjBox = el("div", { class: "form-block" }, [el("h3", {}, ["综合题（填得分，满分默认按当年试卷）"])]);
+    for (const item of schema.subjective) {
       const stored = subjective[String(item.qno)] || {};
-      const fullInput = numberInput(stored.full ?? item.full, { min: 0, max: 30, step: 0.5, oninput: () => recalc() });
-      const scoreInput = numberInput(stored.score ?? 0, { min: 0, max: 30, step: 0.5, oninput: () => recalc() });
+      const fullInput = numberInput(stored.full ?? item.full, { min: 0, max: 50, step: 0.5, oninput: () => recalc() });
+      const scoreInput = numberInput(stored.score ?? 0, { min: 0, max: 50, step: 0.5, oninput: () => recalc() });
       refs.subjective[item.qno] = { item, score: scoreInput, full: fullInput };
       subjBox.appendChild(
         el("div", { class: "form-row tight" }, [
@@ -93,7 +133,7 @@
       type: "text",
       class: "input",
       placeholder: "备注（可选，比如「第一次做」）",
-      value: (record && record.note) || "",
+      value: (draft && draft.note) || (record && record.note) || "",
     });
 
     const totalBox = el("div", { class: "totals" });
@@ -134,12 +174,12 @@
       const { modules, choiceDetail } = compute();
       totalBox.innerHTML = "";
       for (const { group, score } of choiceDetail) {
-        refs.choice[group.subject].cell.textContent = `${score} / ${group.full} 分`;
+        refs.choice[group.key || `g${group.from}`].cell.textContent = `${score} / ${group.full} 分`;
       }
       let total = 0;
       for (const [key, value] of Object.entries(modules)) {
         total += value;
-        const full = state.schema.module_full[key];
+        const full = schema.module_full[key] || 1;
         totalBox.appendChild(
           el("div", { class: "total-item" }, [
             el("span", { class: "k", style: `color:${ZC.COLORS[key]}` }, [ZC.SUBJECT_FULL[key]]),
@@ -151,7 +191,7 @@
           ])
         );
       }
-      const full = state.schema.module_full.total;
+      const full = schema.module_full.total || 150;
       totalBox.appendChild(
         el("div", { class: "total-item strong" }, [
           el("span", { class: "k" }, ["总分"]),
@@ -161,24 +201,58 @@
       );
     }
 
+    /* 换年份要换表单：某年 DS 只有 10 个选择题、综合题分值也可能不同 */
+    async function changeYear() {
+      const year = Number(yearInput.value);
+      if (!year || year === schema.year) return;
+      try {
+        const next = await fetchSchema(year, null);
+        state.schema = next;
+        if (sameShape(next, schema)) {
+          schema.year = year;
+          return;
+        }
+        const draft2 = {
+          paper_year: year,
+          practice_date: dateInput.value || today(),
+          note: noteInput.value,
+          choice: collectChoice(refs),
+          subjective: collectSubjective(refs),
+        };
+        buildForm(record, draft2);
+      } catch (err) {
+        toast(`取不到 ${year} 年的表单结构：${err.message}`, true);
+      }
+    }
+    yearInput.onchange = changeYear;
+
+    function collectChoice(refsIn) {
+      const out = {};
+      for (const [subject, ref] of Object.entries(refsIn.choice)) {
+        out[subject] = Math.max(0, Math.min(ref.group.count, Math.round(Number(ref.input.value) || 0)));
+      }
+      return out;
+    }
+
+    function collectSubjective(refsIn) {
+      const out = {};
+      for (const [qno, ref] of Object.entries(refsIn.subjective)) {
+        out[qno] = { score: Math.max(0, Number(ref.score.value) || 0), full: Math.max(0, Number(ref.full.value) || 0) };
+      }
+      return out;
+    }
+
     async function saveRecord(yearEl, dateEl, refsIn, noteEl) {
       const payload = {
         paper_year: Number(yearEl.value),
         practice_date: dateEl.value || today(),
-        choice: {},
-        subjective: [],
+        choice: collectChoice(refsIn),
+        subjective: Object.entries(collectSubjective(refsIn)).map(([qno, v]) => ({
+          qno: Number(qno), score: v.score, full: v.full,
+        })),
         note: noteEl.value.trim(),
       };
-      for (const [subject, ref] of Object.entries(refsIn.choice)) {
-        payload.choice[subject] = Math.max(0, Math.min(ref.group.count, Math.round(Number(ref.input.value) || 0)));
-      }
-      for (const [qno, ref] of Object.entries(refsIn.subjective)) {
-        payload.subjective.push({
-          qno: Number(qno),
-          score: Math.max(0, Number(ref.score.value) || 0),
-          full: Math.max(0, Number(ref.full.value) || 0),
-        });
-      }
+      if (schema.paper_id) payload.paper_id = schema.paper_id;
       try {
         const path = state.editingId ? `/api/scores/${state.editingId}` : "/api/scores";
         const method = state.editingId ? "PUT" : "POST";
@@ -195,6 +269,17 @@
 
     recalc();
     box.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  /* 结构有没有变（变了才需要重建表单，否则用户填一半被清空很烦） */
+  function sameShape(a, b) {
+    if (!a || !b) return false;
+    const pack = (s) =>
+      JSON.stringify([
+        s.choice_groups.map((g) => [g.subject, g.from, g.to, g.per_score]),
+        s.subjective.map((i) => [i.qno, i.full]),
+      ]);
+    return pack(a) === pack(b);
   }
 
   /* ---------------------------------------------------------- 记录列表 */
@@ -322,7 +407,7 @@
     try {
       const catalog = await api("/api/catalog");
       state.years = catalog.years || [];
-      state.schema = state.schema || (await api("/api/scores/schema"));
+      state.schema = await fetchSchema(state.years[0]?.year ?? null, null);
       await loadRecords();
       await loadTrend();
     } catch (err) {
@@ -333,7 +418,12 @@
   /* ---------------------------------------------------------- 事件 */
   $("#logoutBtn").onclick = () => ZC.session.logout();
   $("#newRecord").onclick = async () => {
-    if (!state.schema) state.schema = await api("/api/scores/schema");
+    try {
+      state.schema = await fetchSchema(state.years[0]?.year ?? null, null);
+    } catch (err) {
+      toast(`取不到表单结构：${err.message}`, true);
+      return;
+    }
     buildForm(null);
   };
   $("#xAxis").onchange = loadTrend;

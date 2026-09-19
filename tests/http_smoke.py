@@ -174,32 +174,36 @@ def main() -> int:
                                      payload={"username": username, "password": "secret123"})["token"]))
 
     schema = call("GET", "/api/scores/schema", key="", token=user_token)
-    check("表单结构：4 组选择题 + 7 道综合题",
-          len(schema["choice_groups"]) == 4 and len(schema["subjective"]) == 7,
-          f'{len(schema["choice_groups"])}/{len(schema["subjective"])}')
-    full = {"paper_year": 2009, "practice_date": "2026-09-17",
-            "choice": {"ds": 11, "co": 11, "os": 10, "cn": 8},
+    check("没传年份时给默认结构（4 组选择题 + 7 道综合题）",
+          schema["source"] == "default" and len(schema["choice_groups"]) == 4 and len(schema["subjective"]) == 7,
+          f'{schema["source"]} {len(schema["choice_groups"])}/{len(schema["subjective"])}')
+    # 用**没导入过试卷的年份**，免得库里已有真题时结构对不上（下面第 2.6 步才专门测"按卷面结构录"）
+    YEAR_A, YEAR_B = 1995, 1996
+    expect_full = schema["module_full"]["total"]
+    full = {"paper_year": YEAR_A, "practice_date": "2026-09-17",
+            "choice": {g["key"]: g["count"] for g in schema["choice_groups"]},
             "subjective": [{"qno": s["qno"], "score": s["full"], "full": s["full"]} for s in schema["subjective"]],
             "note": "冒烟测试"}
     perfect = call("POST", "/api/scores", key="", token=user_token, payload=full)
-    check("全对记录总分 150", perfect["total_score"] == 150, str(perfect["total_score"]))
+    check(f"全对记录 = 满分 {expect_full}", perfect["total_score"] == expect_full, str(perfect["total_score"]))
     partial = call("POST", "/api/scores", key="", token=user_token, payload={
-        "paper_year": 2010, "practice_date": "2026-09-25",
-        "choice": {"ds": 9, "co": 8, "os": 7, "cn": 6},
+        "paper_year": YEAR_B, "practice_date": "2026-09-25",
+        "choice": {g["key"]: max(0, g["count"] - 2) for g in schema["choice_groups"]},
         "subjective": [{"qno": s["qno"], "score": round(s["full"] / 2, 1), "full": s["full"]} for s in schema["subjective"]],
     })
-    check("半对记录分数合理", 0 < partial["total_score"] < 150, str(partial["total_score"]))
+    check("半对记录分数合理", 0 < partial["total_score"] < expect_full, str(partial["total_score"]))
 
     records = call("GET", "/api/scores", key="", token=user_token)
     check("列表 2 条且按时间倒序", len(records) == 2 and records[0]["practice_date"] == "2026-09-25",
           str([r["practice_date"] for r in records]))
-    check("带模块得分率", records[0]["rates"]["ds"] > 0 and records[0]["total_full"] == 150)
+    check("带模块得分率", records[0]["rates"]["ds"] > 0 and records[0]["total_full"] == expect_full)
 
     trend = call("GET", "/api/scores/trend?x_axis=practice_date", key="", token=user_token)
     check("时间轴 2 个点", len(trend["labels"]) == 2, str(trend["labels"]))
-    check("模块百分比 + 总分绝对分", trend["series"]["ds"][0] == 100.0 and trend["series"]["total"][0] == 150)
+    check("模块百分比 + 总分绝对分",
+          trend["series"]["ds"][0] == 100.0 and trend["series"]["total"][0] == expect_full)
     year_trend = call("GET", "/api/scores/trend?x_axis=paper_year&aggregate=latest", key="", token=user_token)
-    check("年份轴按年份排序", year_trend["labels"] == ["2009", "2010"], str(year_trend["labels"]))
+    check("年份轴按年份排序", year_trend["labels"] == [str(YEAR_A), str(YEAR_B)], str(year_trend["labels"]))
 
     estimate = trend["estimate"]
     check("趋势响应里带「当前水平估计」", estimate["count"] == 2, str(estimate["count"]))
@@ -208,14 +212,15 @@ def main() -> int:
           str(estimate["weights"]))
     check("估计总分介于两次成绩之间", 95 < estimate["total"] < 150, str(estimate["total"]))
     check("估计里模块是得分率、总分是原始分",
-          all(0 <= v <= 100 for v in estimate["modules"].values()) and estimate["total_full"] == 150,
+          all(0 <= v <= 100 for v in estimate["modules"].values()) and estimate["total_full"] == expect_full,
           f'{estimate["modules"]} total={estimate["total"]}')
     check("估计样本按时间倒序", [s["practice_date"] for s in estimate["samples"]] == ["2026-09-25", "2026-09-17"],
           str([s["practice_date"] for s in estimate["samples"]]))
 
     edited = call("PUT", f"/api/scores/{partial['id']}", key="", token=user_token, payload={
         **full, "practice_date": "2026-09-26", "note": "改过"})
-    check("编辑后重算并更新日期", edited["practice_date"] == "2026-09-26" and edited["total_score"] == 150,
+    check("编辑后重算并更新日期",
+          edited["practice_date"] == "2026-09-26" and edited["total_score"] == expect_full,
           f'{edited["practice_date"]} / {edited["total_score"]}')
     call("DELETE", f"/api/scores/{edited['id']}", key="", token=user_token)
     check("删除后只剩 1 条", len(call("GET", "/api/scores", key="", token=user_token)) == 1)
@@ -251,6 +256,67 @@ def main() -> int:
     check("第 3 题为跨页题", bool(q3) and len(q3["bbox"]["blocks"]) == 2,
           str(len(q3["bbox"]["blocks"])) if q3 else "无")
     check("题目带 image_urls", all(q["image_urls"] for q in questions))
+
+    print("\n2.5) 卷面结构（各年题号范围/分值不同，所以结构挂在试卷上）")
+    structure = call("GET", f"/api/papers/{paper_id}/structure")
+    check("切完题自动生成了结构", structure["source"] == "auto" and bool(structure["choice"]),
+          f'{structure["source"]} / {len(structure["choice"])} 组')
+    check("结构覆盖切出来的题号（1-5）",
+          sorted(q for g in structure["choice"] for q in range(g["from"], g["to"] + 1)) == [1, 2, 3, 4, 5],
+          str(structure["choice"]))
+    check("第 4 题卷面印的 (8分) 被读进结构",
+          any(g["per_score"] == 8.0 for g in structure["choice"]), str(structure["choice"]))
+    expect_paper_full = round(
+        sum((g["to"] - g["from"] + 1) * g["per_score"] for g in structure["choice"]) +
+        sum(s["full"] for s in structure["subjective"]), 1)
+    check(f"模块满分按这份卷子算（{expect_paper_full}）",
+          structure["module_full"]["total"] == expect_paper_full, str(structure["module_full"]))
+
+    print("\n2.6) 用户端录成绩跟着试卷结构走（管理员改了立刻生效）")
+    paper_schema = call("GET", f"/api/scores/schema?year=2009", key="", token=user_token)
+    check("该年份的表单结构来自刚上传的试卷",
+          paper_schema["source"] != "default" and paper_schema["paper_id"] == paper_id,
+          f'{paper_schema["source"]} paper={paper_schema["paper_id"]}')
+    check("模块满分与试卷结构一致", paper_schema["module_full"]["total"] == expect_paper_full,
+          str(paper_schema["module_full"]))
+    check("未登录读/改结构都是 401",
+          status_of("GET", f"/api/papers/{paper_id}/structure", "") == 401
+          and status_of("PUT", f"/api/papers/{paper_id}/structure", "") == 401)
+    try:
+        call("PUT", f"/api/papers/{paper_id}/structure", key="", token=user_token,
+             payload={"choice": [{"subject": "ds", "from": 1, "to": 5, "per_score": 3}], "subjective": []})
+        check("普通用户被拦在结构编辑外", False, "竟然改成功了")
+    except urllib.error.HTTPError as exc:
+        check("普通用户被拦在结构编辑外 403", exc.code == 403, str(exc.code))
+
+    saved = call("PUT", f"/api/papers/{paper_id}/structure", payload={
+        "choice": [{"subject": "ds", "from": 1, "to": 5, "per_score": 3}], "subjective": []})
+    check("管理员保存结构（source=manual）",
+          saved["source"] == "manual" and saved["module_full"]["ds"] == 15.0, str(saved["module_full"]))
+    check("保存后用户端表单跟着变",
+          call("GET", "/api/scores/schema?year=2009", key="", token=user_token)["module_full"]["total"] == 15.0)
+    try:
+        call("PUT", f"/api/papers/{paper_id}/structure", payload={
+            "choice": [{"subject": "ds", "from": 1, "to": 5, "per_score": 3},
+                       {"subject": "co", "from": 3, "to": 9, "per_score": 2}], "subjective": []})
+        check("重叠题号被拦下", False, "竟然通过了")
+    except urllib.error.HTTPError as exc:
+        check("重叠题号被拦下 400", exc.code == 400, str(exc.code))
+
+    rebuilt = call("POST", f"/api/papers/{paper_id}/structure/rebuild")
+    check("按题目重建回到卷面结构", rebuilt["module_full"]["total"] == expect_paper_full,
+          str(rebuilt["module_full"]))
+
+    scored = call("POST", "/api/scores", key="", token=user_token, payload={
+        "paper_year": 2009, "paper_id": paper_id, "practice_date": "2026-09-18",
+        "choice": {g["key"]: g["count"] for g in paper_schema["choice_groups"]}, "subjective": []})
+    check(f"按卷面结构录一条：满分 {expect_paper_full}",
+          scored["total_score"] == expect_paper_full and scored["total_full"] == expect_paper_full,
+          f'{scored["total_score"]} / {scored["total_full"]}')
+    check("记录里存了试卷 id 与结构来源",
+          scored["detail"]["paper_id"] == paper_id and scored["detail"]["schema_source"] == "auto",
+          f'{scored["detail"].get("paper_id")} / {scored["detail"].get("schema_source")}')
+    call("DELETE", f"/api/scores/{scored['id']}", key="", token=user_token)
 
     print("\n3) 用户端接口（要登录）")
     catalog = call("GET", "/api/catalog", key="", token=user_token)

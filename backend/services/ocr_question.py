@@ -17,6 +17,8 @@ from .. import config
 MAIN_RE = re.compile(r"^\s*[（(\[【]?\s*(\d{1,2})\s*[.、．。·・,，:：]\s*")
 # 小问：`(1)` `1)` `（2）`；不匹配 `1.`
 SUB_RE = re.compile(r"^\s*[（(]?\s*(\d{1,2})\s*[)）]\s*")
+# 题号行里印的分值：`(8分)` `（10 分）`
+SCORE_RE = re.compile(r"[（(]\s*(\d{1,2}(?:\.\d+)?)\s*分\s*[)）]")
 
 
 @dataclass
@@ -99,6 +101,22 @@ def parse_sub_label(text: str) -> str | None:
     if not m:
         return None
     return f"({int(m.group(1))})"
+
+
+def parse_score(text: str) -> float | None:
+    """从题号行里读分值，如 `43. (8分) 设某计算机…` -> 8.0。
+
+    408 综合题的分值印在题号后面，各年不同；读到了就能自动填进试卷结构，
+    读不到（或读错）由管理员在后台改。
+    """
+    m = SCORE_RE.search(text or "")
+    if not m:
+        return None
+    try:
+        value = float(m.group(1))
+    except ValueError:  # pragma: no cover
+        return None
+    return value if 0 < value <= 50 else None
 
 
 def detect_marks(

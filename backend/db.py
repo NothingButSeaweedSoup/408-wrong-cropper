@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS papers (
     progress    INTEGER NOT NULL DEFAULT 0,
     message     TEXT    NOT NULL DEFAULT '',
     dpi         REAL    NOT NULL DEFAULT 0,
+    -- 卷面结构（各题号范围/科目/分值）：JSON
+    -- {"source":"auto|manual","choice":[{subject,from,to,per_score}],"subjective":[{qno,subject,full}]}
+    structure_json TEXT NOT NULL DEFAULT '{}',
     created_at  TEXT    NOT NULL
 );
 
@@ -151,6 +154,10 @@ def migrate(conn: sqlite3.Connection) -> None:
     user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
     if "is_admin" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+
+    paper_columns = {row["name"] for row in conn.execute("PRAGMA table_info(papers)")}
+    if "structure_json" not in paper_columns:
+        conn.execute("ALTER TABLE papers ADD COLUMN structure_json TEXT NOT NULL DEFAULT '{}'")
 
 
 # ---------------------------------------------------------------- 小工具

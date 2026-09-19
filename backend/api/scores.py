@@ -5,16 +5,21 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from .. import config, db
-from ..services import score_service
+from .. import db
+from ..services import paper_structure, score_service
 
 router = APIRouter(prefix="/api/scores", tags=["scores"])
 
 
 class ScoreIn(BaseModel):
-    """录入一次成绩：选择题给答对个数，综合题给每题得分/满分。"""
+    """录入一次成绩：选择题给答对个数，综合题给每题得分/满分。
+
+    `paper_id` 可选：同一年份导了多份卷子时指定用哪份的结构算分；
+    不传就取该年份最新一份（再没有就退回默认结构）。
+    """
 
     paper_year: int
+    paper_id: int | None = None
     practice_date: str | None = None
     choice: dict[str, int] = Field(default_factory=dict)          # {"ds": 9, "co": 8, "os": 7, "cn": 6}
     subjective: list[dict] = Field(default_factory=list)          # [{"qno":41,"score":8,"full":10}, ...]
@@ -29,9 +34,14 @@ def _user_id(request: Request) -> int:
 
 
 @router.get("/schema")
-def schema(year: int | None = None):
-    """录入表单结构：题组区间、每题分值、综合题默认满分。"""
-    return config.score_form_schema(year)
+def schema(year: int | None = None, paper_id: int | None = None):
+    """录入表单结构：题组区间、每题分值、综合题默认满分。
+
+    结构来自**那份试卷**（`papers.structure_json`，导入切题时自动生成、管理员可改）；
+    该年份还没导入试卷时退回默认结构，响应里的 `source` 是 `"default"`，前端会提示。
+    """
+    with db.get_conn() as conn:
+        return paper_structure.resolve_schema(conn, year, paper_id)
 
 
 @router.get("")

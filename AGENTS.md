@@ -9,7 +9,8 @@
 > **登录模型**：管理员不再是独立密钥，而是**普通账号**——用户名写进 `backend/.env` 的 `ZC_ADMIN_USERS` 即为管理员；
 > `ZC_ADMIN_KEY` 只作兜底（脚本/首次引导）。登录态同时下发 HttpOnly Cookie（图片与下载链接靠它）。
 > **以 README.md 第 1 节的对照表和 `backend/` 代码为准**；本文涉及处已加注。
-> 第 5.7 / 12 节的「得分记录 + 趋势」已实现（实现说明见 7.8 / 12.7），另有用户系统（7.9）与安卓端（7.10）。
+> 第 5.7 / 12 节的「得分记录 + 趋势」已实现（实现说明见 7.8 / 12.7），另有用户系统（7.9）、安卓端（7.10）
+> 与**卷面结构**（7.11：各年题号范围/分值不同，所以结构是"这份试卷"的属性，管理员可在后台改）。
 
 ## 1. 项目简介
 
@@ -110,9 +111,10 @@
 - 支持拖拽调整上下边界、合并/拆分题块、手动补题号。
 - 保存校正后的 bbox 和图片路径。
 
-### 5.7 历年真题得分记录与趋势分析（**已实现**，见 7.8 / 12.7）
-- 用户选真题年份 → 表单按题组填**答对个数**（1-11 DS、12-22 计组、23-32 OS、33-40 计网，每题 2 分）+
-  综合题 41-47 逐题填**得分/满分**（各年分布不同，满分可改）→ 后端算模块分与总分入库。
+### 5.7 历年真题得分记录与趋势分析（**已实现**，见 7.8 / 7.11 / 12.7）
+- 用户选真题年份 → 表单**按那份试卷的卷面结构**生成：选择题逐组填**答对个数**（组数/题号范围/每题分值
+  都来自试卷结构，某年 DS 只有 10 题就只显示 10 题），综合题逐题填**得分/满分**（满分默认取结构，可手改）
+  → 后端算模块分与总分入库。没导入过该年份的试卷时退回 `config.default_score_schema()`（`source="default"`）。
 - 趋势折线图 X 轴可切「实际做题时间 / 真题年份」，同年多条可取最近一次/平均/最高。
 
 ## 6. 目录结构（v0.2 实际）
@@ -131,7 +133,7 @@
 ├── backend/                  # FastAPI 后端
 │   ├── main.py               # 入口：挂 /api、用户端 H5(/)、管理后台(/admin)、启动时生成密钥
 │   ├── __main__.py           # python -m backend 启动（端口取 config.SERVER_PORT）
-│   ├── config.py             # 全部可调参数 + 408 卷面结构 + 得分表单结构 + .env 读取
+│   ├── config.py             # 全部可调参数 + 408 **默认**卷面结构（没导入试卷时兜底）+ .env 读取
 │   ├── auth.py               # 三档鉴权中间件（默认拒绝）
 │   ├── db.py                 # SQLite schema 与访问层（取代 models.py + SQLAlchemy）
 │   ├── schemas.py            # pydantic 请求模型
@@ -140,6 +142,7 @@
 │   │   ├── pdf_render.py  ocr_question.py  cropper.py  pipeline.py
 │   │   ├── layout.py  word_builder.py
 │   │   ├── user_service.py   # 密码哈希 / token 签发校验
+│   │   ├── paper_structure.py # **每份试卷的题号范围与分值**（推导/校验/查库/存库）
 │   │   └── score_service.py  # 算分 / 入库 / 趋势聚合
 │   └── api/
 │       ├── papers.py  questions.py  export.py  common.py
@@ -155,7 +158,8 @@
 │   └── style.css
 ├── admin/                    # 管理后台（Vue 3 + Vite）
 │   ├── package.json  vite.config.js   # base=/admin/，dev 代理 /api -> 18100
-│   └── src/{App.vue, api.js, style.css, components/{PageEditor,QuestionTable}.vue}
+│   └── src/{App.vue, api.js, style.css,
+│            components/{PageEditor,QuestionTable,StructurePanel}.vue}  # StructurePanel=卷面结构
 ├── android/                  # 安卓端（Java WebView 壳，不用 Gradle）
 │   ├── app/{AndroidManifest.xml, res/, java/com/zc/wrongbook/MainActivity.java}
 │   ├── fetch_sdk.py          # 下载最小 SDK（platform + build-tools + R8）
@@ -165,6 +169,7 @@
     ├── test_ocr_crop.py      # 题号正则 / 过滤 / 墨迹检测 / 卷面结构
     ├── test_layout.py        # 换页与拆分规则
     ├── test_scores.py        # 算分 / 趋势聚合 / 水平估计 / 密码与 token / 管理员标记
+    ├── test_structure.py     # 卷面结构：自动推导 / 校验 / 按结构算分 / 读卷面分值
     ├── test_auth_admin.py    # 三档鉴权与权限边界（进程内跑 ASGI，不起端口）
     ├── web_dom_smoke.js      # 前端交互（迷你 DOM 跑真脚本：登录门/Tab/录入表单）
     ├── make_sample_pdf.py    # 生成图片型 PDF 测试样本
@@ -228,17 +233,18 @@
 - 任何请求 401 时 `core.js` 广播 `zc:need-login` → 弹回登录门（提示"登录已过期"）。
 
 ### 7.8 `backend/services/score_service.py` 与 `backend/api/scores.py`（**已实现**）
-录入口径（表单结构由后端 `config.score_form_schema()` 给出，前端不写死）：
-- **选择题**按 4 个题组填**答对个数**：1-11 DS、12-22 计组、23-32 OS、33-40 计网，每组每题 2 分（共 80 分）；
-- **综合题 41-47** 逐题填**得分**与**满分**（各年分布不同，默认 41:10/42:13/43:13/44:10/45:7/46:8/47:9，共 70 分）；
-- 模块分 = 该模块选择题得分 + 该模块综合题得分；总分 = 四模块之和（满分 150）。
+录入口径（表单结构**由那份试卷决定**，见 7.11；前端不写死）：
+- **选择题**逐组填**答对个数**：组数/题号范围/每题分值都来自 `papers.structure_json`；
+  默认（兜底）结构是 1-11 DS、12-22 计组、23-32 OS、33-40 计网，每题 2 分（共 80 分）；
+- **综合题**逐题填**得分**与**满分**（满分默认取结构——切题时从卷面 `(8分)` 读或按默认表，用户可手改）；
+- 模块分 = 该模块选择题得分 + 该模块综合题得分；总分 = 四模块之和（默认满分 150，各年可能不同）。
 
 数据表 `exam_records`：`user_id / paper_year / practice_date / total_score / ds_score / co_score /
 os_score / cn_score / detail_json（录入口径 + 三处明细 + 当时的满分）/ note / created_at`。
 存 `detail_json` 是为了以后改了默认满分，老记录不会被"重新解释"。
 
 接口（都要登录，数据按 `user_id` 隔离）：
-- `GET /api/scores/schema` 表单结构
+- `GET /api/scores/schema?year=&paper_id=` 表单结构（该试卷的结构 → 没导入试卷时退回默认，看 `source`）
 - `POST /api/scores` 录入（算分后入库，返回带 `rates`/`total_rate` 的记录）
 - `GET /api/scores` 列表（按做题时间倒序）
 - `PUT /api/scores/{id}` / `DELETE /api/scores/{id}` 改（重算）/ 删
@@ -254,9 +260,9 @@ X 轴/聚合规则：
 - 取最近 3 次成绩（按 `practice_date` 倒序），权重 `ESTIMATE_WEIGHTS = (0.5, 0.35, 0.15)`；
   **不足 3 次时按已有次数归一化**：1 次 = 100%，2 次 = 50/85≈58.8% 与 35/85≈41.2%（`weights` 字段给出实际权重，
   `base_weights` 是原始权重，`message` 会说明是否归一化）。
-- **总分**：用**原始分**加权，满分固定 150（返回 `total` / `total_full` / `total_rate`）。
-- **模块**：**先算每条记录的得分率再加权**，且分母用**那条记录当时的模块满分**（`_record_module_full` 从
-  `detail_json.breakdown` 汇总各题组满分；老记录没明细时退回 `MODULE_FULL_SCORE`）。
+- **总分**：用**原始分**加权，满分取各条记录 `total_full` 的加权平均（各年满分可能不同；都导入过就是 150）。
+- **模块**：**先算每条记录的得分率再加权**，且分母用**那条记录当时的模块满分**（`module_full_of_record`：
+  优先读 `detail_json.module_full` 快照，其次按 `breakdown` 累加，老记录才退回 `MODULE_FULL_SCORE`）。
   这样各年综合题分布不同（比如 42 题某年 13 分、某年 15 分）也不会引入偏差——测试里专门覆盖了
   "41 题满分改成 15 后 DS 应该是 100% 而不是 111%"。
 - 它**始终按做题时间取最近三次**，与图表 X 轴切到 `paper_year` 无关（"当前水平"就是最近这几次的状态）。
@@ -295,6 +301,47 @@ X 轴/聚合规则：
 - 打包**不用 Gradle**：`android/fetch_sdk.py` 拉最小 SDK，`android/build_apk.py` 走
   aapt2 compile/link → javac → jar → d8 → 自写 zip（`resources.arsc` 保持不压缩）→ zipalign → apksigner。
   产物 `android/dist/408错题本-1.0.apk`。
+
+### 7.11 `backend/services/paper_structure.py` —— 每份试卷自己的卷面结构（v0.2 追加）
+
+**为什么需要它**：408 各年分布并不一致——数据结构选择题某些年 10 题、某些年 11 题；综合题 41-47 的分值
+年年不同。所以「题号范围 + 每题分值」是**试卷的属性**，不能写死在 `config` 里（config 只留一份兜底结构）。
+
+结构形状（存在 `papers.structure_json`）：
+
+```json
+{"source": "auto|manual",
+ "choice":     [{"subject": "ds", "from": 1, "to": 10, "per_score": 1.5}],
+ "subjective": [{"qno": 41, "subject": "ds", "full": 12}]}
+```
+
+来源三条路：
+
+1. **自动推导**（`from_questions`）：导入切完题后按 `questions` 表分组——同科目、同分值、题号连续合成一组，
+   分值一变就拆组；主观题逐题一条，满分优先用切题时从卷面 `(8分)` 读到的值（`ocr_question.parse_score`），
+   读不到才用 `SUBJECTIVE_FULL_DEFAULT`。`pipeline.process_paper()` 切完题立刻存库，并把概要写进
+   `papers.message`（"结构 3 选择 + 0 综合，满分 16.0"）。
+2. **管理员改**（`normalize` 校验后 `save`）：后台「试卷结构」面板改范围/分值/科目，`source` 变 `manual`。
+3. **兜底**：该年份没导入过试卷 → `config.default_score_schema()`，响应的 `source == "default"`
+   （用户端表单会提示"该年份还没导入真题试卷"）。
+
+要点与坑：
+
+- `normalize` 校验：题号范围 1~`QNO_MAX`、每题分值 0~10、综合题满分 0~50、**题号不能重叠**、
+  不能既是选择题又是综合题。同一科目**允许多组**（比如 DS 1-5 每题 2 分、6-10 每题 3 分）。
+- **录入按"分组 key"提交**：`to_schema()` 给每组一个 `key = "g{起始题号}"`，`compute()` 先按 key 查，
+  该科目只有一组时也认科目名（兼容老记录/老前端）。`detail_json.input.choice` 两种 key 都存了。
+- `resolve_schema(conn, year, paper_id)`：指定 `paper_id` 就用那一份；否则取该年份**最新**的一份
+  （`for_year` 按 `papers.id DESC`）；都没有才退回默认。
+- **老记录不重新解释**：算分时把当时的满分写进 `detail_json.module_full` 快照，`record_out()`
+  用快照算得分率。改了结构后老记录的分数与得分率一个字都不变（`tests/test_structure.py` 专门覆盖）。
+- 模块满分随结构走（`module_full_of` / `module_full_total`，后者多带一个 `total`）：
+  某年 DS 只有 10 题 × 1.5 分时满分就是 27 而不是 45，趋势图的右轴上限取各点最大值。
+- 接口（**都要管理员**）：`GET /api/papers/{id}/structure`、
+  `PUT /api/papers/{id}/structure`（400 + 可直接展示的中文报错）、
+  `POST /api/papers/{id}/structure/rebuild`（按当前题目表重新推导，管理员校正过题号/分值后用）。
+- 前端：管理后台 `components/StructurePanel.vue`（题组表 + 综合题表 + 满分合计，total ≠ 150 只是提示）；
+  用户端 `web/scores.js` 在**换年份**时重新 `GET /api/scores/schema?year=`，结构变了就带已填内容重建表单。
 
 ## 8. 开发环境与运行（v0.2 实际，Windows）
 
@@ -342,6 +389,7 @@ npm run build      # 产物 admin/dist，后端重启后由 /admin/ 托管
 .\.venv\Scripts\python.exe tests\test_ocr_crop.py    # 正则/过滤/裁剪，秒级
 .\.venv\Scripts\python.exe tests\test_layout.py      # 换页/拆分规则，秒级
 .\.venv\Scripts\python.exe tests\test_scores.py      # 算分/趋势/水平估计/密码与 token，秒级
+.\.venv\Scripts\python.exe tests\test_structure.py   # 卷面结构：推导/校验/按结构算分，秒级
 .\.venv\Scripts\python.exe tests\test_auth_admin.py  # 鉴权三档与权限边界，秒级
 node tests\web_dom_smoke.js                          # 前端交互（登录门/Tab/录入表单），秒级
 .\.venv\Scripts\python.exe tests\e2e.py              # 端到端（含 OCR，约 1 分钟）
@@ -362,6 +410,9 @@ node --check web\scores.js                           # 前端改动后至少过�
 - 改动切题/排版逻辑后，跑 `tests/test_ocr_crop.py` + `tests/test_layout.py`；改动接口后跑 `tests/http_smoke.py` +
   `tests/test_scores.py`；改前端后至少 `node --check`。
 - 趋势图是自绘 SVG（`web/chart.js`），别引 uCharts/ECharts；X 轴切换时重新请求 `/api/scores/trend`。
+- **卷面结构不要写死**：任何「题号范围 / 每题分值 / 综合题满分」都要从 `paper_structure` 取，
+  `config` 那份只是「该年份还没导入试卷」的兜底；改动涉及分值的地方要跑 `tests/test_structure.py`。
+- 改 AGENTS.md 别在这台机器上用 PowerShell 的 `Get-Content -Raw | Set-Content -Encoding UTF8`（见 11 节）。
 
 ## 10. 给 AI 代理的指令
 
@@ -380,6 +431,8 @@ node --check web\scores.js                           # 前端改动后至少过�
 - 跨页题在 Word 中应连续插入多张图片，中间不要加分页符。
 - 输出文件命名格式：`408错题本_YYYY-MM-DD_HHMM.docx`。
 - 得分趋势：X 轴支持 `practice_date` 和 `paper_year`；模块用百分比、总分用绝对分（双 Y 轴）；同年多条给 `aggregate` 选项。
+- **分值/题号范围一律来自试卷结构**（7.11），不要在前端或算分里写死 1-11/12-22/每题 2 分；
+  新增结构相关接口默认归管理员档，只有 `GET /api/scores/schema` 是登录即可。
 - 前端（H5 / 安卓）与后端的所有接口约定**以 `backend/api/` 为准**，改接口要同步 `web/core.js` 的封装和 `admin/src/api.js`。
 - 安卓端不要引 androidx/Gradle：`android/` 刻意保持零依赖 + 手工流水线，加依赖会让 `build_apk.py` 失效。
 - 密码/token/权限相关改动必须跑 `tests/test_auth_admin.py` + `tests/test_scores.py`；
@@ -414,13 +467,19 @@ node --check web\scores.js                           # 前端改动后至少过�
 - 这台机器的 `pwsh` 不在 PATH 里、实际执行的是 **Windows PowerShell 5.1**：`.ps1` 必须带 UTF-8 BOM（否则中文乱码报语法错），
   且没有 `Invoke-RestMethod -Form`。所以测试脚本一律用 Python 写（`tests/http_smoke.py`）。
 - 控制台是 GBK：Python 脚本里加 `sys.stdout.reconfigure(encoding="utf-8")`，否则打印中文/符号会 `UnicodeEncodeError`。
+- **别用 PowerShell 读写 UTF-8 源码**：PS 5.1 的 `Get-Content -Raw` 按 GBK 解码、`Set-Content -Encoding UTF8` 再编码，
+  会把中文注释变成乱码（甚至 `SyntaxError: invalid character '＄'`），而且**不可逆**（GBK 解不出的字节变成 U+FFFD）。
+  要批量改文件就用 Python（`Path.read_text(encoding="utf-8")`）或 `edit` 工具；弄坏了用 `git checkout -- <file>` 回滚再重做。
 
 **用户系统 / 得分相关**
 - 新建 `users` / `exam_records` 这类表时**别忘 `created_at`**：schema 没写默认值，insert 漏字段会
   `NOT NULL constraint failed`（用户系统第一次就是这么炸的）。
 - `practice_date` 和 `paper_year` 必须分开存，不要混用；日期统一 `YYYY-MM-DD`。
 - 按 `paper_year` 聚合时，同年多条要明确口径（`latest` / `avg` / `max`），并在返回里标出 `count`。
-- 录入口径与满分要跟着记录一起存（`detail_json`）：以后改了默认满分，老记录不能被重新解释。
+- 录入口径与满分要跟着记录一起存（`detail_json`）：以后改了**试卷结构**或默认满分，老记录不能被重新解释。
+  管理员改结构后 `paper_structure.save()` 只影响之后的录入；`record_out()` 永远按记录自己的 `module_full` 快照算得分率。
+- 选择题录入值的 key 是**分组 key**（`g{起始题号}`）而不是科目名：同一科目允许多组（每题分值不同），
+  按科目名查会在多组时把同一个答对数算两遍。只有该科目只有一组时才回退按科目名。
 - 用户接口不吃管理员密钥：`/api/scores*` 只认登录态（Cookie/token）；反过来管理接口的 `X-Admin-Key` 也进不了用户接口。
 - **浏览器端必须有 Cookie**：`<img src="/api/questions/1/images/0">` 和 `<a download>` 带不了 `Authorization` 头，
   只靠 token 会看到一片裂图、下载 401。所以就绪时同时下发 HttpOnly Cookie（`zc_token`），
@@ -549,9 +608,9 @@ CREATE TABLE exam_records (
 - 如果用户未记录某年，则该年不出现在 X 轴（或补 0，根据产品决定，默认不补）。
 
 ### 12.7 v0.2 实际实现对照（与上面设计稿的差异）
-- **录入**：不是直接填模块分，而是"选年份 → 按题组填答对个数（选择题）+ 逐题填得分/满分（41-47）→ 后端算分"。
-  表单结构由 `GET /api/scores/schema` 给（`config.score_form_schema()`），前端只渲染；
-  `POST/PUT` 提交的是原始录入值，后端 `score_service.compute()` 复算，防止前端算错或改分。
+- **录入**：不是直接填模块分，而是"选年份 → 按题组填答对个数（选择题）+ 逐题填得分/满分 → 后端算分"。
+  表单结构由 `GET /api/scores/schema?year=` 给——**该年份试卷的卷面结构**（见 7.11），没导入过才退回
+  `config.default_score_schema()`；前端只渲染，`POST/PUT` 提交原始录入值，后端 `score_service.compute()` 复算。
 - **存库**：`exam_records` 多了 `detail_json`（原始录入 + 三处明细 + 当时的满分），少了个 `note` 之外的一切冗余。
 - **接口**：见 7.8；趋势接口多了 `aggregate` 参数与 `points` 明细数组。
 - **前端**：`web/scores.js`（登录/表单/列表）+ `web/chart.js`（自绘 SVG），没有 UniApp、没有 uCharts。
@@ -570,6 +629,5 @@ CREATE TABLE exam_records (
 - 得分趋势支持按模块查看历史最高/最低/平均。
 - 支持导入/导出得分记录 CSV。
 - 错题勾选记录云端同步（当前刻意只存浏览器本地：用户明确说了"不需要在线错题本"）。
-- 试卷结构按年份可配置（目前综合题满分在录入表单里手改）。
 - 管理员重置用户密码 / 用户改密码。
 

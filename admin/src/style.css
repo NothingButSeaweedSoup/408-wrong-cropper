@@ -335,3 +335,47 @@ body {
   border-top: 1px solid var(--line);
 }
 .user-list .uname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- 试卷结构（题号范围与分值） ---- */
+.panel-tabs { display: flex; gap: 4px; }
+.panel-tabs .btn.active { background: #eef4ff; border-color: #cfe0ff; color: var(--brand); font-weight: 600; }
+.structure { padding: 12px; overflow: auto; flex: 1; }
+.structure .card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.struct-row {
+  display: grid;
+  grid-template-columns: 150px 96px 96px 96px 1fr 44px;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 0;
+  border-top: 1px solid var(--line);
+}
+/* 综合题那张表少两列 */
+.structure .card:nth-of-type(2) .struct-row { grid-template-columns: 96px 150px 96px 1fr 44px; }
+.struct-head { color: var(--muted); font-size: 12px; border-top: none; }
+.struct-row input,
+.struct-row select {
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 13px;
+  width: 100%;
+}
+.totals-line { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.total-chip {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.total-chip b { color: var(--fg, #1f2329); font-size: 14px; }
+.total-chip.strong { border-color: #cfe0ff; background: #f6f9ff; }
+.hint.warn { color: #a15c00; }
+.struct-actions { display: flex; gap: 8px; align-items: center; }
+.struct-actions .btn.primary { width: auto; margin-top: 0; padding: 6px 14px; }
+.qline input.score { width: 64px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; }

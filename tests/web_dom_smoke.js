@@ -238,7 +238,8 @@ function makeFetch(state) {
         return json({ token: "fake-token", user: state.user, expires_at: "2027-01-01 00:00:00" });
       }
       if (pathOnly === "/api/auth/status") return json({ allow_register: true, user_count: 1 });
-      if (pathOnly === "/api/catalog") return json({ years: [{ year: 2009, papers: 1, questions: 2 }] });
+      if (pathOnly === "/api/catalog")
+        return json({ years: state.catalogYears || [{ year: 2009, papers: 1, questions: 2 }] });
       if (pathOnly === "/api/questions") {
         return json([
           { id: 1, year: 2009, question_no: 1, subject: "ds", type: "choice", image_urls: ["/api/questions/1/images/0"] },
@@ -263,6 +264,9 @@ async function main() {
     loggedIn: false,
     user: { id: 1, username: "tester", display_name: "测试", is_admin: false },
     schema: {
+      source: "paper",
+      paper_id: 7,
+      paper_title: "2009 年真题",
       choice_groups: [
         { subject: "ds", name: "数据结构", from: 1, to: 11, count: 11, per_score: 2, full: 22 },
         { subject: "co", name: "计算机组成原理", from: 12, to: 22, count: 11, per_score: 2, full: 22 },
@@ -380,8 +384,46 @@ async function main() {
   console.log("\n4) 点「录入成绩」应展开表单");
   byId.newRecord.click();
   await tick();
+  await tick();
   check("#recordForm 展开", !byId.recordForm.classList.contains("hidden"));
   check("表单里生成了控件", byId.recordForm.children.length > 3, `${byId.recordForm.children.length} 个`);
+
+  /* 表单结构必须来自那份试卷，不能写死 1-11/12-22 + 每题 2 分 */
+  const textOf = (node) => {
+    let out = node.textContent || "";
+    for (const child of node.children || []) out += " " + textOf(child);
+    return out;
+  };
+  let formText = textOf(byId.recordForm);
+  check("表单按试卷结构显示每题分值", formText.includes("每题 2 分"), formText.slice(0, 80));
+  check("表单显示了结构来源", formText.includes("2009 年真题"));
+  check("表单问了 2009 年的结构", fake.calls.some((c) => c === "GET /api/scores/schema?year=2009"), fake.calls.join(" | "));
+
+  console.log("\n4b) 换一年（DS 只有 10 题、每题 1.5 分）后表单要跟着变");
+  state.schema = {
+    ...state.schema,
+    source: "paper",
+    paper_title: "2010 年真题",
+    choice_groups: [
+      { subject: "ds", name: "数据结构", from: 1, to: 10, count: 10, per_score: 1.5, full: 15 },
+      { subject: "co", name: "计算机组成原理", from: 11, to: 20, count: 10, per_score: 2, full: 20 },
+    ],
+    subjective: [{ qno: 41, subject: "ds", name: "数据结构", full: 12 }],
+    module_full: { ds: 27, co: 20, os: 0, cn: 0, total: 47 },
+  };
+  state.catalogYears = [{ year: 2010, papers: 1, questions: 30 }];
+  byClass.tab.find((t) => t.dataset.view === "pick").click();
+  byClass.tab.find((t) => t.dataset.view === "scores").click();
+  await tick();
+  await tick();
+  byId.newRecord.click();
+  await tick();
+  await tick();
+  formText = textOf(byId.recordForm);
+  check("每题分值跟着结构变", formText.includes("每题 1.5 分"), formText.slice(0, 80));
+  check("题号范围跟着结构变", formText.includes("数据结构 1-10"));
+  check("综合题满分跟结构（41 题 12 分）", formText.includes("第 41 题"));
+  check("按新年份要了结构", fake.calls.some((c) => c === "GET /api/scores/schema?year=2010"), fake.calls.join(" | "));
 
   console.log("\n5) 点击「导出记录」Tab");
   const historyTab = byClass.tab.find((t) => t.dataset.view === "history");

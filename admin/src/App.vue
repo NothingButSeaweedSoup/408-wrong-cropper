@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { api, clearAuth, getAdminKey, getUserToken, setAdminKey, setUserToken } from "./api.js";
 import PageEditor from "./components/PageEditor.vue";
 import QuestionTable from "./components/QuestionTable.vue";
+import StructurePanel from "./components/StructurePanel.vue";
 
 /* ---------------------------------------------------------- 登录门 */
 const locked = ref(true);
@@ -16,6 +17,7 @@ const identity = ref(null); // {via: "user"|"key", user: {...}}
 
 const papers = ref([]);
 const paper = ref(null);
+const panel = ref("split"); // split = 切题校正；structure = 试卷结构（范围与分值）
 const page = ref(1);
 const version = ref(0);
 const uploadYear = ref(new Date().getFullYear() - 17); // 408 真题一般从 2009 起
@@ -417,12 +419,27 @@ onUnmounted(() => {
           </span>
           <span v-else-if="paper.message" class="hint">{{ paper.message }}</span>
           <span class="spacer"></span>
+          <div class="panel-tabs">
+            <button class="btn tiny" :class="{ active: panel === 'split' }" @click="panel = 'split'">
+              切题校正
+            </button>
+            <button class="btn tiny" :class="{ active: panel === 'structure' }" @click="panel = 'structure'">
+              试卷结构
+            </button>
+          </div>
           <button class="btn" @click="recrop">整卷重裁</button>
           <button class="btn" @click="reprocess">重新识别</button>
           <button class="btn danger" @click="removePaper">删除真题</button>
         </div>
 
-        <div v-if="paper.pages.length" class="panes">
+        <StructurePanel
+          v-if="panel === 'structure' && paper.status !== 'failed'"
+          :paper="paper"
+          @refresh="refresh"
+          @notify="notify"
+        />
+        <div v-else-if="panel === 'structure'" class="placeholder">这份真题处理失败了，先「重新识别」。</div>
+        <div v-else-if="paper.pages.length" class="panes">
           <PageEditor
             :paper="paper"
             :version="version"

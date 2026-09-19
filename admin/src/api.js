@@ -75,6 +75,11 @@ export const api = {
   reprocess: (id) => request(`/api/papers/${id}/reprocess`, { method: "POST" }),
   recrop: (id) => request(`/api/papers/${id}/recrop`, { method: "POST" }),
 
+  getStructure: (id) => request(`/api/papers/${id}/structure`),
+  saveStructure: (id, payload) =>
+    request(`/api/papers/${id}/structure`, { method: "PUT", body: JSON.stringify(payload) }),
+  rebuildStructure: (id) => request(`/api/papers/${id}/structure/rebuild`, { method: "POST" }),
+
   upload(file, year, title) {
     const form = new FormData();
     form.append("file", file);

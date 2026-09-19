@@ -186,15 +186,24 @@ MODULE_FULL_SCORE = {"total": 150.0, "ds": 45.0, "co": 45.0, "os": 35.0, "cn": 2
 PAPER_STATUS = ("uploaded", "rendered", "split", "corrected")
 
 # ---------------------------------------------------------------- 得分录入
-# 选择题分组：(科目, 题号下限, 题号上限, 每题分值)
+# 说明：这些只是**默认/兜底**结构。真题各年的题号范围和分值并不一致
+# （比如数据结构选择题某些年 10 题、某些年 11 题，综合题分值年年不同），
+# 所以真正用于录入的结构来自**每份试卷自己的 structure**（管理员导入时可校准，
+# 见 services/paper_structure.py；试卷结构缺失时才回退到这里）。
+#
+# 选择题分组默认值：(科目, 题号下限, 题号上限, 每题分值)
 CHOICE_GROUPS: tuple[tuple[str, int, int, float], ...] = (
     ("ds", 1, 11, 2.0),
     ("co", 12, 22, 2.0),
     ("os", 23, 32, 2.0),
     ("cn", 33, 40, 2.0),
 )
-# 综合题 41~47 的默认满分。各年份分布不完全一样，所以录入表单里允许逐题改。
+# 综合题 41~47 的默认满分（仅在没有试卷结构时兜底）
 SUBJECTIVE_FULL_DEFAULT: dict[int, float] = {41: 10.0, 42: 13.0, 43: 13.0, 44: 10.0, 45: 7.0, 46: 8.0, 47: 9.0}
+# 选择题每题默认分值（真实卷面是 40 题 × 2 分 = 80 分）
+DEFAULT_CHOICE_PER_SCORE = 2.0
+# 客观题（选择）与主观题题号上限，用于结构校验
+QNO_SUBJECTIVE_FROM = 41
 
 # ---------------------------------------------------------------- 用户系统
 ALLOW_REGISTER_DEFAULT = os.getenv("ZC_ALLOW_REGISTER", "1") not in ("0", "", "false", "False")
@@ -213,10 +222,14 @@ def subject_of(qno: int) -> tuple[str, str, float | None]:
     return ("ds", "choice" if qno <= 40 else "subjective", None)
 
 
-def score_form_schema(year: int | None = None) -> dict:
-    """得分录入表单的结构（前端不写死 408 卷面分布，全部由后端给）。"""
+def default_score_schema(year: int | None = None) -> dict:
+    """**兜底**的得分录入表单结构（试卷结构缺失时用）。
+
+    真正的结构优先取该年份试卷的 `structure_json`，见 services/paper_structure.py。
+    """
     choice = [
         {
+            "key": f"g{lo}",
             "subject": subject,
             "name": SUBJECT_NAMES[subject],
             "from": lo,
@@ -234,13 +247,24 @@ def score_form_schema(year: int | None = None) -> dict:
             "name": SUBJECT_NAMES[subject_of(qno)[0]],
             "full": SUBJECTIVE_FULL_DEFAULT.get(qno, 0.0),
         }
-        for qno in range(41, 48)
+        for qno in range(QNO_SUBJECTIVE_FROM, QNO_MAX + 1)
     ]
+    module_full = {key: round(sum(g["full"] for g in choice if g["subject"] == key)
+                              + sum(s["full"] for s in subjective if s["subject"] == key), 1)
+                   for key in ("ds", "co", "os", "cn")}
+    module_full["total"] = round(sum(module_full.values()), 1)
     return {
         "year": year,
+        "source": "default",
+        "paper_id": None,
+        "paper_title": "",
         "choice_groups": choice,
         "subjective": subjective,
-        "module_full": MODULE_FULL_SCORE,
+        "module_full": module_full,
         "choice_full": round(sum(g["full"] for g in choice), 1),
         "subjective_full": round(sum(s["full"] for s in subjective), 1),
     }
+
+
+# 兼容旧调用名（早期只有"全局写死"这一种结构）
+score_form_schema = default_score_schema

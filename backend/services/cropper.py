@@ -13,6 +13,7 @@ import numpy as np
 from PIL import Image
 
 from .. import config
+from . import ocr_question
 from .ocr_question import QuestionMark
 from .pdf_render import PageImage
 
@@ -233,6 +234,7 @@ def split_paper(
     grays = {p.page_no: load_gray(p.path) for p in pages}
     x0, x1 = content_x_range(grays)
     blocks_by_qno = build_blocks(pages, main_marks, grays)
+    mark_text = {m.qno: m.text for m in main_marks}
     paper_dir.mkdir(parents=True, exist_ok=True)
 
     questions: list[dict] = []
@@ -251,12 +253,18 @@ def split_paper(
 
         own = sub_marks_for(blocks, sub_marks)
         subject, qtype, score = config.subject_of(qno)
+        # 分值以卷面印的「（8分）」为准，各年综合题分布不同；读不到才落到默认值。
+        ocr_score = ocr_question.parse_score(mark_text.get(qno, ""))
+        score_source = "default"
+        if ocr_score is not None:
+            score, score_source = ocr_score, "ocr"
         questions.append(
             {
                 "question_no": qno,
                 "subject": subject,
                 "type": qtype,
                 "score": score,
+                "score_source": score_source,
                 "order_no": qno,
                 "image_paths": [b.path for b in blocks],
                 "bbox": {

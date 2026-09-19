@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 
 from .. import config, db
-from . import cropper, ocr_question, pdf_render
+from . import cropper, ocr_question, paper_structure, pdf_render
 
 
 def abs_path(rel: str | Path) -> Path:
@@ -110,11 +110,28 @@ def process_paper(paper_id: int) -> None:
                     for q in questions
                 ],
             )
+
+        # 卷面结构是**这份试卷的属性**：某年 DS 选择题可能是 10 题、综合题 42 题可能是 15 分，
+        # 所以切完题立刻按题目自动分组存下来，录入成绩的表单就用它。
+        structure = paper_structure.from_questions(questions)
+        with db.get_conn() as conn:
+            conn.execute(
+                "UPDATE papers SET structure_json=? WHERE id=?",
+                (json.dumps(structure, ensure_ascii=False), paper_id),
+            )
+
+        fulls = paper_structure.module_full_of(structure)
         set_status(
             paper_id,
             "split",
             100,
-            f"完成：识别 {len(main_marks)} 个题号，切出 {len(questions)} 道题",
+            "完成：识别 {} 个题号，切出 {} 道题（结构 {} 选择 + {} 综合，满分 {}）".format(
+                len(main_marks),
+                len(questions),
+                len(structure["choice"]),
+                len(structure["subjective"]),
+                round(sum(fulls.values()), 1),
+            ),
         )
     except Exception as exc:  # noqa: BLE001 —— 兜底写库，前端轮询能看到原因
         set_status(paper_id, "failed", 0, f"处理失败：{exc}")

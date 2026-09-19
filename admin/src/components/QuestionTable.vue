@@ -87,6 +87,18 @@ async function remove(q) {
             <option value="choice">选择</option>
             <option value="subjective">主观</option>
           </select>
+          <!-- 分值：主观题每题不同，改完去「试卷结构」点一次「按题目重建」 -->
+          <input
+            class="score"
+            type="number"
+            step="0.5"
+            min="0"
+            max="50"
+            title="这题的分值（主观题用；改完在「试卷结构」里重建）"
+            :value="q.score ?? ''"
+            :disabled="busy === q.id"
+            @change="save(q, { score: $event.target.value === '' ? 0 : Number($event.target.value) })"
+          />
           <span class="tag">{{ q.image_urls.length }} 图</span>
           <span class="tag">{{ q.height_cm }} cm</span>
           <span v-if="q.source === 'manual'" class="tag manual">已校正</span>
