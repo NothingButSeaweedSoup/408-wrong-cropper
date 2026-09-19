@@ -32,9 +32,14 @@ async def lifespan(_app: FastAPI):
         admins = user_service.sync_admin_users(conn)
         users = user_service.user_count(conn)
     port = config.SERVER_PORT
+    urls = config.access_urls()
     print("=" * 70)
     print("  408 错题助手已启动")
-    print(f"  用户端   http://127.0.0.1:{port}/")
+    print(f"  用户端   {urls[0]}      （本机）")
+    if len(urls) > 1:
+        print(f"  局域网   {urls[1]}   ← 手机 / 平板 / 安卓 App 填这个")
+    else:
+        print("  局域网   没查到本机 IP，手机可能连不上（可跑 python -m backend --print-ip 复查）")
     print(f"  管理后台 http://127.0.0.1:{port}/admin/")
     if config.ADMIN_USERS:
         print(f"  管理员账号：{', '.join(sorted(config.ADMIN_USERS))}（backend/.env 的 ZC_ADMIN_USERS）")

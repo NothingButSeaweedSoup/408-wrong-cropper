@@ -1,0 +1,20 @@
+# 构建镜像时不要把本机的东西塞进上下文（尤其是 130MB 的 Android SDK）
+.git
+.gitignore
+.gitattributes
+.venv
+.npm-cache
+data
+.android-sdk
+android/build
+android/dist
+admin/node_modules
+admin/dist
+**/__pycache__
+**/*.pyc
+*.log
+.env
+backend/.env
+tests
+AGENTS.md
+README.md

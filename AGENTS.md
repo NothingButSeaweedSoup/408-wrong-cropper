@@ -166,6 +166,7 @@
     ├── test_layout.py        # 换页与拆分规则
     ├── test_scores.py        # 算分 / 趋势聚合 / 水平估计 / 密码与 token / 管理员标记
     ├── test_auth_admin.py    # 三档鉴权与权限边界（进程内跑 ASGI，不起端口）
+    ├── web_dom_smoke.js      # 前端交互（迷你 DOM 跑真脚本：登录门/Tab/录入表单）
     ├── make_sample_pdf.py    # 生成图片型 PDF 测试样本
     ├── e2e.py                # 端到端（含 OCR）
     └── http_smoke.py         # HTTP 全链路（鉴权 + Cookie + 用户 + 错题 + 导出）
@@ -342,6 +343,7 @@ npm run build      # 产物 admin/dist，后端重启后由 /admin/ 托管
 .\.venv\Scripts\python.exe tests\test_layout.py      # 换页/拆分规则，秒级
 .\.venv\Scripts\python.exe tests\test_scores.py      # 算分/趋势/水平估计/密码与 token，秒级
 .\.venv\Scripts\python.exe tests\test_auth_admin.py  # 鉴权三档与权限边界，秒级
+node tests\web_dom_smoke.js                          # 前端交互（登录门/Tab/录入表单），秒级
 .\.venv\Scripts\python.exe tests\e2e.py              # 端到端（含 OCR，约 1 分钟）
 .\.venv\Scripts\python.exe tests\http_smoke.py       # HTTP 全链路（需先启动服务）
 node --check web\scores.js                           # 前端改动后至少过一遍语法
@@ -427,6 +429,15 @@ node --check web\scores.js                           # 前端改动后至少过�
   第一版按前缀一刀切，导致**任何登录用户都能 PATCH/DELETE 题目**（`tests/test_auth_admin.py` 抓出来的）。
   现在 `needs_login()` 是「方法 + 路径」。
 - `403` 与 `401` 要分清：没登录/没凭证 → 401（前端弹登录页）；已登录但不是管理员 → 403（提示换账号）。
+
+**前端交互相关（v0.2 踩过）**
+- `core.js` 的 `initTabs()` 一度"只定义没调用"，结果**三个 Tab 全都没点击事件**（用户点了没反应），
+  而后端 6 个测试套件照样全绿——这类 bug 只有真跑前端才看得见。
+  现在有 `tests/web_dom_smoke.js`：自带迷你 DOM，在 Node 里跑真实的 `core.js/app.js/scores.js/chart.js`，
+  断言登录门、Tab 切换、录入表单展开。**改前端交互后必须跑它**；把 `initTabs()` 注释掉会立刻 6 条 FAIL。
+- 迷你 DOM 只实现 `#id` / `.class` 选择器和用到的那批 API；前端若用了新的 DOM API
+  （如 `createDocumentFragment`、`insertAdjacentHTML`、`el.id`），要在测试脚手架里补上，否则会"因为脚手架缺失"而失败。
+- 用户端关键入口（登录门 → 得分 Tab → 「录入成绩」）都在这个测试里断言过，别再漏。
 
 **安卓相关（实际踩过的）**
 - build-tools 34 自带 d8 是 R8 8.2.2，遇到 **JDK 21** 编译出的匿名内部类会崩

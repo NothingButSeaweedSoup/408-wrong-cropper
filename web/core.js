@@ -203,6 +203,7 @@ window.ZC = (() => {
   }
 
   function wireGate() {
+    initTabs(); // 三个 Tab 的点击绑定（漏了这行会导致点 Tab 没反应）
     $("#authTabLogin").onclick = () => setAuthMode("login");
     $("#authTabRegister").onclick = () => setAuthMode("register");
     $("#authSubmit").onclick = submitAuth;

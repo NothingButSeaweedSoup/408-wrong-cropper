@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import socket
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -68,6 +69,37 @@ ADMIN_USERS: frozenset[str] = frozenset(
 def is_admin_username(username: str | None) -> bool:
     """用户名是否在 .env 的管理员名单里（名单里的账号登录后即管理员）。"""
     return bool(username) and username.strip() in ADMIN_USERS
+
+
+# ---------------------------------------------------------------- 本机地址
+def local_ips() -> list[str]:
+    """本机可用于局域网访问的 IPv4（第一项是默认出口网卡的那个）。
+
+    手机连电脑、安卓 App 填服务器地址都要用它；启动时会打印出来，
+    也可以用 `python -m backend --print-ip` 单独查。
+    """
+    ips: list[str] = []
+    try:
+        # 不开真连接：UDP connect 只是让内核挑一张出口网卡，不产生流量
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            ips.append(sock.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = str(info[4][0])
+            if ip not in ips and not ip.startswith("127."):
+                ips.append(ip)
+    except OSError:
+        pass
+    return ips
+
+
+def access_urls(port: int | None = None) -> list[str]:
+    """本机的访问地址列表（含 127.0.0.1，局域网 IP 在后）。"""
+    port = SERVER_PORT if port is None else port
+    return [f"http://127.0.0.1:{port}/"] + [f"http://{ip}:{port}/" for ip in local_ips()]
 
 
 def ensure_admin_key() -> str:

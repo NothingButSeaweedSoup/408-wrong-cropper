@@ -227,6 +227,7 @@ debug 签名）。传到手机点击安装（需允许「安装未知来源应�
 .\.venv\Scripts\python.exe tests\test_layout.py      # 换页与拆分规则，秒级
 .\.venv\Scripts\python.exe tests\test_scores.py      # 算分/趋势/当前水平估计/密码与 token，秒级
 .\.venv\Scripts\python.exe tests\test_auth_admin.py  # 鉴权：公开/登录/管理员 三档与权限边界，秒级
+node tests\web_dom_smoke.js                          # 前端交互（登录门/Tab/录入表单），迷你 DOM 跑真脚本，秒级
 .\.venv\Scripts\python.exe tests\e2e.py              # 端到端（含 OCR，约 1 分钟）
 .\.venv\Scripts\python.exe tests\http_smoke.py       # HTTP 全链路（需先启动服务）
 ```
