@@ -125,6 +125,7 @@
 ├── README.md
 ├── requirements.txt
 ├── Dockerfile                # 多阶段构建：node 构建管理后台 → python:3.12-slim 跑后端
+├── docker-entrypoint.sh      # 容器入口：修 /data 属主 → setpriv 降权到 10001 再跑应用
 ├── docker-compose.yml        # 单机部署：18100 端口 + ./data 卷 + 环境变量
 ├── .dockerignore             # 排除 backend/.env、data/、android/、tests/ 等
 ├── .env.example              # 复制成 backend/.env（配 ZC_ADMIN_USERS / ZC_PORT 等）
@@ -361,7 +362,13 @@ X 轴/聚合规则：
   再复制进 `python:3.12-slim`；运行镜像只装 `requirements.txt` + `backend/` + `web/` + `admin/dist`。
 - **只装了运行期系统库**：`libgomp1`（onnxruntime）、`libglib2.0-0`、**`libgl1` + `libxcb1`**（opencv 的 so 链着它们，
   少了会在切题时报 `libxcb.so.1: cannot open shared object file`）、`tzdata`。
-- **非 root**：uid 10001 的 `zc` 用户跑，`/app` 属于 root（只读），只能写 `/data`。
+- **非 root（但入口用 root 起一下）**：`docker-entrypoint.sh` 以 root 启动，先 `mkdir -p /data/*`，
+  发现 `/data` 对 uid 10001 不可写就 `chown -R 10001:10001 /data`，然后 `setpriv --reuid=10001 ...` 降权，
+  应用进程始终是 10001（`grep Uid /proc/1/status` 可验）。**为什么必须这样**：compose 的
+  `./data:/data` 是 bind mount，首次 `up` 时宿主机上由 Docker 以 root 建目录，镜像里那句
+  `chown zc:zc /data` 会被挂载盖掉，于是启动就 `PermissionError: [Errno 13] '/data/uploads'`
+  （Linux 服务器上第一次部署必踩）。命名卷没这问题，但 bind mount 才好备份/搬数据。
+  只在真的不可写时才递归 chown，避免每次重启都遍历几万张图。
 - **环境变量**：`ZC_DATA_DIR=/data`、`ZC_HOST=0.0.0.0`、`ZC_PORT=18100`（镜像里已设）；管理员名单与兜底密钥
   由 compose 传 `ZC_ADMIN_USERS` / `ZC_ADMIN_KEY`，**不把 `backend/.env` 打进镜像**（`.dockerignore` 排除）。
 - **健康检查**：`HEALTHCHECK` 用 python 打 `/api/health`（不额外装 curl），`docker compose ps` 会显示 healthy。
@@ -418,7 +425,9 @@ docker compose ps                 # healthy 才算真起来
 docker compose down               # 停止（数据在 ./data）
 ```
 - 本机验证时别再占 18100（本机服务在用）：`docker run -d -p 18101:18100 ...`，再打 18101；
-- Linux 服务器上若报数据目录没权限：`sudo chown -R 10001:10001 data`（容器里是 uid 10001 的 `zc`）；
+- 数据目录属主：`docker-entrypoint.sh` 会自己修（首次 `up` 时 Docker 以 root 建 `./data`，
+  容器里的 10001 写不进去 → 入口脚本 chown 后降权）。只有你自己用 `user:` 覆盖 uid 时才需要
+  `sudo chown -R 10001:10001 data`；
 - 容器里 `ZC_DATA_DIR=/data` 在项目目录**外面**，所以入库路径要靠 `config.rel_path()`（见 11 节的坑）。
 
 ### 测试

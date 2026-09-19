@@ -52,11 +52,16 @@ COPY backend/ ./backend/
 COPY web/ ./web/
 COPY --from=admin-build /build/dist ./admin/dist
 
-# 非 root 跑；数据目录 /data 记得挂卷，否则重启就没了
-# （/app 属于 root、zc 只读，所以应用只能写 /data，正好）
+# 建非 root 用户 zc：应用最终以它跑（入口脚本降权）。
+# /data 在这里先建好并交给 zc —— 用命名卷时开箱即用；bind mount（compose 里的 ./data）会盖掉它，
+# 那时由 docker-entrypoint.sh 在启动时修正属主。
 RUN useradd -m -u 10001 zc && mkdir -p /data && chown -R zc:zc /data
-USER zc
+
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 WORKDIR /app
+ENV HOME=/home/zc
 
 VOLUME ["/data"]
 EXPOSE 18100
@@ -65,4 +70,6 @@ EXPOSE 18100
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:18100/api/health', timeout=4).status==200 else 1)"
 
+# 入口脚本：以 root 起 → 修好 /data 属主 → setpriv 降权到 10001 再跑应用
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python", "-m", "backend"]

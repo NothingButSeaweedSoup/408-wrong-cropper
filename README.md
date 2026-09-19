@@ -320,8 +320,10 @@ docker compose logs -f --tail=50  # 看日志
 **几个要点**：
 
 - **端口**：容器里固定 18100，宿主机端口在 compose 的 `ports` 里改（例如 `"8080:18100"`）；
-- **数据卷**：`./data:/data`。Linux 上如果容器报权限错误，执行一次 `sudo chown -R 10001:10001 data`
-  （容器里用 uid 10001 的非 root 用户跑）；Windows/macOS 的 Docker Desktop 不用管；
+- **数据卷**：`./data:/data`。容器以 root 启动、入口脚本把 `/data` 的属主修正成 uid 10001 后**降权**再跑应用
+  （`docker-entrypoint.sh`），所以首次 `up` 时宿主机建的 root 属主目录不会再报
+  `PermissionError: '/data/uploads'`；只有你自己用 `user:` 指定别的 uid 跑时才需要
+  `sudo chown -R 10001:10001 data`；
 - **环境变量**：`ZC_ADMIN_USERS`（管理员用户名）、`ZC_ADMIN_KEY`（兜底密钥，留空则每次启动随机生成、
   只在日志里能看到，**想固定脚本调用就填上**）、`ZC_ALLOW_REGISTER`、`TZ`、`ZC_DATA_DIR=/data`；
 - **健康检查**：镜像自带 `HEALTHCHECK`（打 `/api/health`），`docker compose ps` 显示 healthy 即可；
