@@ -41,7 +41,8 @@ import android.widget.Toast;
  * 相比"再写一套原生界面"，这样最省事也最不容易走样：
  * <ul>
  *   <li>服务器地址可在 App 内配置（存 SharedPreferences，不用重新打包）；</li>
- *   <li>导出 Word 走系统 DownloadManager，存到「下载」目录并在通知栏可打开；</li>
+ *   <li>导出 Word：交给系统浏览器下载（页面先换一张一次性票，浏览器没有登录 Cookie 也能下），
+ *       没装浏览器就退回系统 DownloadManager（带上 Cookie 头）；</li>
  *   <li>管理后台也能在这个 WebView 里用（支持 &lt;input type=file&gt; 选 PDF）；</li>
  *   <li>不依赖 androidx / Gradle，只用系统 API，便于手工打包成 APK。</li>
  * </ul>
@@ -235,7 +236,8 @@ public class MainActivity extends Activity {
             @Override
             public void onDownloadStart(String url, String userAgent, String contentDisposition,
                                         String mimeType, long contentLength) {
-                download(url, URLUtil.guessFileName(url, contentDisposition, mimeType));
+                // 一律交给系统浏览器下载：WebView 里下到的东西在手机上不好找、也打不开
+                openInBrowser(url);
             }
         });
     }
@@ -245,9 +247,10 @@ public class MainActivity extends Activity {
         if (url == null) {
             return false;
         }
-        // 错题本下载链接交给系统下载器（WebView 里点 <a download> 不一定触发）
-        if (url.contains("/api/exports/") && url.endsWith("/download")) {
-            download(url, "");
+        // 错题本下载链接（页面会带上一次性票）交给系统浏览器：浏览器会存到「下载」目录，
+        // 下完直接能选 WPS/Word 打开；不再用 DownloadManager（它拿不到登录 Cookie，会下到 401 的 JSON）。
+        if (url.contains("/api/exports/") && url.contains("/download")) {
+            openInBrowser(url);
             return true;
         }
         if (url.startsWith("http://") || url.startsWith("https://")) {
@@ -259,6 +262,19 @@ public class MainActivity extends Activity {
             // 没有对应 App，忽略
         }
         return true;
+    }
+
+    /** 用系统浏览器打开（下载 Word 用）。没装浏览器时退回系统下载器（会带上登录 Cookie）。 */
+    private void openInBrowser(String url) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+            Toast.makeText(this, "已交给浏览器下载（完成后在「下载」里打开）", Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "没找到浏览器，改用系统下载器", Toast.LENGTH_SHORT).show();
+            download(url, "");
+        }
     }
 
     private void download(String url, String fileName) {
@@ -284,6 +300,11 @@ public class MainActivity extends Activity {
             request.setMimeType("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+            // 下载器是系统进程，不会自动带 WebView 的 Cookie —— 不带就是下到一份 401 的 JSON
+            String cookie = CookieManager.getInstance().getCookie(url);
+            if (cookie != null && !cookie.isEmpty()) {
+                request.addRequestHeader("Cookie", cookie);
+            }
             DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
             manager.enqueue(request);
             Toast.makeText(this, "正在下载：" + fileName + "\n完成后可在通知栏打开", Toast.LENGTH_LONG).show();

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import secrets
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -14,6 +16,24 @@ from ..services import layout, word_builder
 from . import common
 
 router = APIRouter(prefix="/api", tags=["export"])
+
+# 一次性下载票：手机端把 Word 交给**系统浏览器**下载时，浏览器里没有 WebView 的登录 Cookie，
+# 直接开 /download 会 401；把会话 token 塞进 URL 又会留在浏览器历史里。
+# 所以先用登录态换一张 2 分钟、只能用一次的票，再用票去下载。
+DOWNLOAD_TICKET_TTL = 120.0
+_download_tickets: dict[str, tuple[int, float]] = {}  # ticket -> (export_id, 过期时间戳)
+
+
+def _purge_tickets(now: float) -> None:
+    for key in [k for k, (_, expires) in _download_tickets.items() if expires < now]:
+        _download_tickets.pop(key, None)
+
+
+def _take_ticket(ticket: str, export_id: int) -> None:
+    """核销一张票（一次性的，用完即删）。"""
+    entry = _download_tickets.pop(ticket, None)
+    if entry is None or entry[0] != export_id or entry[1] < time.time():
+        raise HTTPException(401, "下载链接已失效，请回页面重新点一次下载")
 
 
 def _fetch_questions(req: ExportRequest) -> list[dict]:
@@ -140,8 +160,24 @@ def list_exports():
     ]
 
 
+@router.post("/exports/{export_id}/ticket")
+def export_ticket(export_id: int):
+    """发一张一次性下载票，给手机端交给系统浏览器下载用（登录态必需）。"""
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT id FROM exports WHERE id=?", (export_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "导出记录不存在")
+    now = time.time()
+    _purge_tickets(now)
+    ticket = secrets.token_urlsafe(24)
+    _download_tickets[ticket] = (export_id, now + DOWNLOAD_TICKET_TTL)
+    return {"url": f"/api/exports/{export_id}/download?ticket={ticket}", "expires_in": int(DOWNLOAD_TICKET_TTL)}
+
+
 @router.get("/exports/{export_id}/download")
-def download_export(export_id: int):
+def download_export(export_id: int, ticket: str | None = None):
+    if ticket:
+        _take_ticket(ticket, export_id)  # 没票的话，中间件已经拦过登录态了
     with db.get_conn() as conn:
         row = conn.execute("SELECT * FROM exports WHERE id=?", (export_id,)).fetchone()
     if row is None:

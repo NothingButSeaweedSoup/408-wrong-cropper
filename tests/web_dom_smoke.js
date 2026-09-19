@@ -257,7 +257,11 @@ function makeFetch(state) {
         return method === "POST" ? json({ total_score: 112, total_full: 150 }) : json(state.records);
       }
       if (pathOnly === "/api/scores/trend") return json(state.trend);
-      if (pathOnly === "/api/exports") return json([]);
+      if (pathOnly === "/api/exports") return json(state.exports || []);
+      if (/^\/api\/exports\/\d+\/ticket$/.test(pathOnly)) {
+        const id = pathOnly.split("/")[3];
+        return json({ url: `/api/exports/${id}/download?ticket=FAKE-TICKET`, expires_in: 120 });
+      }
       return json({ detail: `未在假 fetch 里实现: ${method} ${pathOnly}` }, 404);
     },
   };
@@ -307,6 +311,12 @@ async function main() {
         message: "只有 1 次记录，权重已按比例归一化",
       },
     },
+    exports: [
+      {
+        id: 1, filename: "408错题本_2026-09-19_1200.docx", created_at: "2026-09-19 12:00:00",
+        question_count: 5, download_url: "/api/exports/1/download",
+      },
+    ],
   };
 
   const storage = new Map();
@@ -331,6 +341,8 @@ async function main() {
     confirm: () => true,
     alert: () => {},
     location: { href: "", reload: () => {} },
+    // 默认当普通浏览器；测安卓壳的下载流程时再改成 "... ZCWrongBook/1.0"
+    navigator: { userAgent: "Mozilla/5.0 (Windows NT 10.0) Chrome/120" },
     CustomEvent: class CustomEvent {
       constructor(type, init = {}) {
         this.type = type;
@@ -488,6 +500,38 @@ async function main() {
   await tick();
   check("#view-history 显示", !byId["view-history"].classList.contains("hidden"));
   check("拉了导出历史 /api/exports", fake.calls.includes("GET /api/exports"));
+  check("导出记录渲染出来了", byId.historyList.children.length > 0, `${byId.historyList.children.length} 条`);
+
+  console.log("\n5b) 安卓壳里点「下载」：先换一次性票，再交给系统浏览器");
+  // 普通浏览器：直接 <a download>，不该去换票
+  // 迷你 DOM 里按钮的文字在子 TextNode 上（textContent 只有直接赋值才有），所以自己拼
+  const btnText = (node) => (node.children || []).map((c) => c.textContent || "").join("");
+  const dlBtn = (function find(node) {
+    for (const child of node.children || []) {
+      if (child.tagName === "BUTTON" && btnText(child) === "下载") return child;
+      const hit = find(child);
+      if (hit) return hit;
+    }
+    return null;
+  })(byId.historyList);
+  check("找得到「下载」按钮", Boolean(dlBtn));
+  const callsBefore = fake.calls.length;
+  dlBtn.click();
+  await tick();
+  check("普通浏览器不换票（直接下载）",
+        !fake.calls.slice(callsBefore).some((c) => c.includes("/ticket")),
+        fake.calls.slice(callsBefore).join(" | "));
+
+  // 换成安卓壳的 UA，再点一次：应该 POST 换票 + 跳转到带票的下载地址
+  sandbox.navigator.userAgent = "Mozilla/5.0 (Linux; Android 14) ZCWrongBook/1.0";
+  sandbox.location.href = "";
+  dlBtn.click();
+  await tick();
+  await tick();
+  check("壳里先要了一次性票", fake.calls.slice(callsBefore).includes("POST /api/exports/1/ticket"),
+        fake.calls.slice(callsBefore).join(" | "));
+  check("跳到带票的下载地址（壳会交给系统浏览器）",
+        String(sandbox.location.href).includes("/api/exports/1/download?ticket="), String(sandbox.location.href));
 
   console.log("\n6) 切回「选错题」Tab");
   byClass.tab.find((t) => t.dataset.view === "pick").click();

@@ -51,7 +51,24 @@ window.ZC = (() => {
     toast._timer = setTimeout(() => node.classList.add("hidden"), 2800);
   }
 
+  /* 安卓壳（MainActivity 往 UA 里加了 ZCWrongBook/1.0）：它会把下载链接交给系统浏览器，
+     而浏览器里没有 WebView 的登录 Cookie，所以要先用登录态换一张一次性票再跳转。 */
+  function isAndroidShell() {
+    return typeof navigator !== "undefined" && /ZCWrongBook/.test(navigator.userAgent || "");
+  }
+
   function download(url) {
+    if (isAndroidShell() && url.includes("/download")) {
+      const ticketUrl = url.replace(/\/download(\?.*)?$/, "/ticket");
+      fetch(ticketUrl, { method: "POST", credentials: "same-origin" })
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error("取下载票失败"))))
+        .then((data) => {
+          // 跳到带票的下载地址：壳会拦截这个 URL，用系统浏览器打开
+          location.href = data.url;
+        })
+        .catch(() => toast("下载失败：登录态可能过期，重新登录后再试", true));
+      return;
+    }
     const a = document.createElement("a");
     a.href = url;
     a.rel = "noopener";

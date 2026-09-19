@@ -53,15 +53,16 @@ async def call(method: str, path: str, *, headers: dict | None = None, body: dic
     if body is not None:
         raw = jsonlib.dumps(body, ensure_ascii=False).encode("utf-8")
         head["content-type"] = "application/json"
+    path_only, _, query = path.partition("?")
     scope = {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},
         "http_version": "1.1",
         "method": method,
         "scheme": "http",
-        "path": path,
-        "raw_path": path.encode(),
-        "query_string": b"",
+        "path": path_only,
+        "raw_path": path_only.encode(),
+        "query_string": query.encode(),
         "root_path": "",
         "headers": [(k.lower().encode(), str(v).encode()) for k, v in head.items()],
         "client": ("127.0.0.1", 45678),
@@ -137,6 +138,17 @@ async def scenario() -> None:
     check("登录后能读 catalog", status == 200, str(status))
     status, _ = await call("POST", "/api/export", headers=bearer(normal["token"]), body={"question_ids": []})
     check("登录后能调导出（空选择报 400 而不是 401）", status == 400, str(status))
+    # 手机端下载：外部浏览器没有登录 Cookie，靠一次性票；票本身由接口校验
+    status, data = await call("GET", "/api/exports/999/download")
+    check("导出下载不带票 -> 中间件拦下 401", status == 401 and "请先登录" in str(data.get("detail", "")),
+          f'{status} {data.get("detail", "")}')
+    status, data = await call("GET", "/api/exports/999/download?ticket=bogus")
+    check("带（假）票 -> 放行进接口，由接口判失效 401",
+          status == 401 and "失效" in str(data.get("detail", "")), f'{status} {data.get("detail", "")}')
+    status, _ = await call("POST", "/api/exports/999/ticket", headers=bearer(normal["token"]))
+    check("换票接口要登录（记录不存在时 404，说明鉴权已过）", status == 404, str(status))
+    status, _ = await call("POST", "/api/exports/999/ticket")
+    check("未登录换不了票 -> 401", status == 401, str(status))
     status, score = await call(
         "POST", "/api/scores", headers=bearer(normal["token"]),
         body={"paper_year": 2009, "practice_date": "2026-09-19",

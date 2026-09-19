@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import secrets
+from collections.abc import Mapping
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -36,10 +37,22 @@ LOGIN_PREFIXES = (
 )
 
 
-def is_public(method: str, path: str) -> bool:
+def is_public(method: str, path: str, query: Mapping[str, str] | None = None) -> bool:
     if path in PUBLIC_EXACT:
         return True
-    return (method, path) in PUBLIC_ROUTES
+    if (method, path) in PUBLIC_ROUTES:
+        return True
+    # 带一次性票的导出下载：手机端把 Word 交给系统浏览器时没有登录 Cookie，
+    # 这里放行，票由 backend/api/export.py 自己校验（2 分钟、一次、绑导出 id）。
+    if (
+        method == "GET"
+        and query
+        and query.get("ticket")
+        and path.startswith("/api/exports/")
+        and path.endswith("/download")
+    ):
+        return True
+    return False
 
 
 def needs_login(method: str, path: str) -> bool:
@@ -77,7 +90,7 @@ def install_guard(app: FastAPI) -> None:
     @app.middleware("http")
     async def guard(request: Request, call_next):
         path = request.url.path
-        if path.startswith("/api") and not is_public(request.method, path) and path != "/api/health":
+        if path.startswith("/api") and not is_public(request.method, path, request.query_params) and path != "/api/health":
             token = token_from_request(request)
             user = None
             if token:

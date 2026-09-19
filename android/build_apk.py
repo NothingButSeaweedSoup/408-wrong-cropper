@@ -9,7 +9,7 @@ Gradle 反而要再拉几百 MB Maven 依赖；手工流水线十几秒就能出
 
 前置：先跑 android/fetch_sdk.py 下载 platform + build-tools。
 跑法：.venv\\Scripts\\python.exe android\\build_apk.py
-产物：android/dist/408错题本-1.1.apk
+产物：android/dist/408错题本-1.2.apk
 """
 
 from __future__ import annotations
@@ -39,8 +39,8 @@ BUILD_TOOLS = SDK / "build-tools" / "34.0.0"
 
 MIN_SDK = "24"
 TARGET_SDK = "34"
-VERSION_CODE = "2"
-VERSION_NAME = "1.1"
+VERSION_CODE = "3"
+VERSION_NAME = "1.2"
 APK_NAME = f"408错题本-{VERSION_NAME}.apk"
 
 try:

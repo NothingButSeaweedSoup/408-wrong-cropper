@@ -416,6 +416,23 @@ def main() -> int:
     check("含标题与笔记留白", "年第" in xml)
     check("导出历史有记录", len(call("GET", "/api/exports", key="", token=user_token)) >= 1)
 
+    print("\n7.5) 手机端下载：一次性票（外部浏览器没有登录 Cookie）")
+    latest = call("GET", "/api/exports", key="", token=user_token)[0]
+    ticket = call("POST", f"/api/exports/{latest['id']}/ticket", key="", token=user_token)
+    check("登录态能换到下载票", "ticket=" in ticket["url"] and ticket["expires_in"] > 0, ticket["url"])
+    status, _h, blob2 = call("GET", ticket["url"], binary=True, key="")  # 不带 token / 不带 Cookie
+    check("拿着票、不带登录态也能下到 docx", status == 200 and len(blob2) > 5000, f"{round(len(blob2)/1024)} KB")
+    try:
+        call("GET", ticket["url"], binary=True, key="")
+        check("票是一次性的（第二次就失效）", False, "居然还能下")
+    except urllib.error.HTTPError as exc:
+        check("票是一次性的（第二次就失效）", exc.code == 401, str(exc.code))
+    try:
+        call("GET", latest["download_url"], binary=True, key="")
+        check("没有票、又没有登录态 -> 401", False, "居然能下")
+    except urllib.error.HTTPError as exc:
+        check("没有票、又没有登录态 -> 401", exc.code == 401, str(exc.code))
+
     print("\n8) 静态资源")
     status, _h, index = call("GET", "/", binary=True, key="")
     check("用户端 H5 可访问", status == 200 and "408 错题本" in index.decode("utf-8"))

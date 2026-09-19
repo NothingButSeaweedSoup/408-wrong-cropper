@@ -168,7 +168,7 @@
 │   ├── app/{AndroidManifest.xml, res/, java/com/zc/wrongbook/MainActivity.java}
 │   ├── fetch_sdk.py          # 下载最小 SDK（platform + build-tools + R8）
 │   ├── build_apk.py          # aapt2 → javac → d8 → zipalign → apksigner
-│   └── dist/408错题本-1.1.apk
+│   └── dist/408错题本-1.2.apk
 └── tests/
     ├── test_ocr_crop.py      # 题号正则 / 过滤 / 墨迹检测 / 卷面结构
     ├── test_layout.py        # 换页与拆分规则
@@ -285,6 +285,8 @@ X 轴/聚合规则：
   **登录与注册会同时下发 HttpOnly Cookie `zc_token`**（`config.TOKEN_COOKIE`），退出时删掉。
 - `backend/auth.py`（中间件，三档权限）：
   - 公开：`/api/health`、`/api/meta`、`/api/auth/status`、`POST /api/auth/login|register`；
+    以及 **带 `?ticket=` 的 `GET /api/exports/{id}/download`**（手机端交给外部浏览器，没有登录 Cookie，
+    票由 `api/export.py` 自己核销：2 分钟、一次、绑导出 id）；
   - 登录即可（`needs_login`）：`/api/catalog`、`/api/export(s)`、`/api/scores*`、`/api/auth/me|logout`，
     以及 **GET** `/api/questions*`（列表/详情/题目图）；
   - 其余 `/api/*`：管理员。管理员 = `users.is_admin`（由 `.env` 的 `ZC_ADMIN_USERS` 播种），或 `X-Admin-Key` 兜底。
@@ -305,13 +307,16 @@ X 轴/聚合规则：
   用户会遇到「服务端改了、App 里没变」（后端也加了 no-cache + 资源版本戳，这里是第二层保险）。
 - **登录态走 Cookie**：显式开 `CookieManager.setAcceptCookie` / `setAcceptThirdPartyCookies`，
   并在 `onPause()` 里 `flush()` 落盘，下次打开还是登录态。
-- 导出 Word：拦截 `/api/exports/*/download` 与 WebView 的 `DownloadListener`，交给系统 `DownloadManager`
-  存到公共「下载」目录（API < 29 时才申请 `WRITE_EXTERNAL_STORAGE`）。
+- **导出 Word 交给系统浏览器下载**（v1.2）：页面在壳里下载时先用登录态换一张**一次性票**
+  （`POST /api/exports/{id}/ticket`，2 分钟、用完即废），再跳转到 `/download?ticket=...`；
+  壳拦到这个 URL 就 `Intent.ACTION_VIEW` 丢给浏览器（浏览器会存到「下载」目录，下完能直接选 WPS/Word 打开）。
+  **为什么不用 DownloadManager**：它是系统进程，拿不到 WebView 的登录 Cookie，之前会下到一份 401 的 JSON；
+  现在是没装浏览器时才退回 DownloadManager，并且会补上 `Cookie` 头。
 - 顺带支持管理后台上传：实现 `onShowFileChooser` 选 PDF。
 - `AndroidManifest.xml` 必须 `android:usesCleartextTraffic="true"`（局域网 http）。
 - 打包**不用 Gradle**：`android/fetch_sdk.py` 拉最小 SDK，`android/build_apk.py` 走
   aapt2 compile/link → javac → jar → d8 → 自写 zip（`resources.arsc` 保持不压缩）→ zipalign → apksigner。
-  产物 `android/dist/408错题本-1.1.apk`。
+  产物 `android/dist/408错题本-1.2.apk`。
 
 ### 7.11 `backend/services/paper_structure.py` —— 每份试卷自己的卷面结构（v0.2 追加）
 
@@ -414,7 +419,7 @@ npm run build      # 产物 admin/dist，后端重启后由 /admin/ 托管
 ### 安卓端（可选，改动了 android/ 才需要）
 ```powershell
 .\.venv\Scripts\python.exe android\fetch_sdk.py    # 首次：platform + build-tools + R8，约 130MB
-.\.venv\Scripts\python.exe android\build_apk.py    # 产物 android/dist/408错题本-1.1.apk
+.\.venv\Scripts\python.exe android\build_apk.py    # 产物 android/dist/408错题本-1.2.apk
 ```
 
 ### Docker（部署到服务器，本机 Windows 上也能跑）
@@ -517,8 +522,14 @@ node --check web\scores.js                           # 前端改动后至少过�
   容器里 `ZC_DATA_DIR=/data` 不在 `/app` 下 → `ValueError: '/data/uploads/x.pdf' is not in the subpath of '/app'`
   （上传直接 500）。现在统一走 `config.rel_path()`：能相对就相对，否则存绝对路径，
   `abs_path()` 本来就同时认两种。**新增任何"入库前算路径"的地方都用它。**
+- **手机端下载要用「一次性票」**：安卓壳把下载交给系统浏览器，浏览器里没有 WebView 的登录 Cookie，
+  直接开 `/api/exports/{id}/download` 会 401。所以页面先 `POST .../ticket` 拿票再跳转；
+  票存在进程内存里（`api/export.py` 的 `_download_tickets`），重启即失效——只在单进程下有效，
+  以后真要多进程就得挪到库里。`tests/http_smoke.py` 的 7.5 段覆盖「票能下 / 票只能用一次 / 没票 401」。
 - **别用 PowerShell 读写 UTF-8 源码**：PS 5.1 的 `Get-Content -Raw` 按 GBK 解码、`Set-Content -Encoding UTF8` 再编码，
   会把中文注释变成乱码（甚至 `SyntaxError: invalid character '＄'`），而且**不可逆**（GBK 解不出的字节变成 U+FFFD）。
+  更阴的是 `(Get-Content x) -replace ... | Set-Content x -NoNewline`：**会把整个文件拼成一行**
+  （Get-Content 返回的是行数组，-NoNewline 不加分隔符），Python 文件直接语法错误（`build_apk.py` 中过招）。
   要批量改文件就用 Python（`Path.read_text(encoding="utf-8")`）或 `edit` 工具；弄坏了用 `git checkout -- <file>` 回滚再重做。
 
 **用户系统 / 得分相关**
