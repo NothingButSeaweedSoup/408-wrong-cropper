@@ -69,6 +69,22 @@ app.add_middleware(
 # 管理端鉴权（默认拒绝，公开接口白名单见 backend/auth.py）
 auth.install_guard(app)
 
+
+@app.middleware("http")
+async def no_stale_static(request, call_next):
+    """静态资源（用户端 H5 / 管理后台）强制每次回源校验。
+
+    用户端是无构建的：改了 `web/*.js` 刷新一下就该生效。但 StaticFiles 不带 `Cache-Control`，
+    浏览器会按 `Last-Modified` 做**启发式缓存**，结果文件改了、用户浏览器还在跑旧脚本
+    （踩过：录入表单的总分明明改好了，用户看到的还是旧的）。加 `no-cache` 后浏览器每次都会带
+    `If-None-Match` 来问一句：没变就 304（几字节），变了就拿到新的。
+    """
+    response = await call_next(request)
+    if request.method == "GET" and not request.url.path.startswith("/api") and response.status_code == 200:
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
+
 app.include_router(papers.router)
 app.include_router(questions.router)
 app.include_router(export.router)

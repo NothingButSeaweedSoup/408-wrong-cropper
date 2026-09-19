@@ -421,6 +421,11 @@ def main() -> int:
     check("用户端 H5 可访问", status == 200 and "408 错题本" in index.decode("utf-8"))
     status, _h, js = call("GET", "/app.js", binary=True, key="")
     check("app.js 可访问", status == 200 and len(js) > 3000, f"{len(js)}B")
+    status, headers, scores_js = call("GET", "/scores.js", binary=True, key="")
+    check("scores.js 是最新内容（带客观/主观分块）",
+          "客观题".encode("utf-8") in scores_js, f"{len(scores_js)}B")
+    check("静态资源强制回源校验（改了前端刷新就生效）",
+          "no-cache" in (headers.get("Cache-Control") or ""), str(headers.get("Cache-Control")))
 
     print("\n9) 清理测试数据")
     call("DELETE", f"/api/papers/{paper_id}")
