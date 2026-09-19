@@ -21,10 +21,17 @@ RUN npm run build
 FROM python:3.12-slim
 
 # onnxruntime 要 libgomp1；opencv 的 so 里还链着 libGL/libxcb（即使是 headless 版，
-# 少了会报 "libxcb.so.1: cannot open shared object file"，切题时才会炸）
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 libglib2.0-0 libgl1 libxcb1 tzdata \
-    && rm -rf /var/lib/apt/lists/*
+# 少了会报 "libxcb.so.1: cannot open shared object file"，切题时才会炸）。
+# apt 官方源在国内很慢（索引 9.7MB 拉了 166 秒），换国内镜像实测 41 秒（含装包）；
+# 要用官方源：--build-arg APT_MIRROR=deb.debian.org
+ARG APT_MIRROR=mirrors.tuna.tsinghua.edu.cn
+RUN set -eux; \
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
+        [ -f "$f" ] && sed -i "s|deb.debian.org|${APT_MIRROR}|g" "$f" || true; \
+    done; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends libgomp1 libglib2.0-0 libgl1 libxcb1 tzdata; \
+    rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

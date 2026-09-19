@@ -284,12 +284,17 @@ git clone <你的仓库> 408-wrong-cropper && cd 408-wrong-cropper
 # 2) 改 docker-compose.yml 里的 ZC_ADMIN_USERS（你的用户名）；想固定兜底密钥就填 ZC_ADMIN_KEY
 vi docker-compose.yml
 
-# 3) 构建 + 后台启动（首次构建约 3~6 分钟，镜像约 1.3GB：onnxruntime + opencv + pymupdf）
+# 3) 构建 + 后台启动（首次构建约 3~5 分钟，镜像约 1.3GB：onnxruntime + opencv + pymupdf）
 docker compose up -d --build
 
 # 4) 看启动横幅（会打印访问地址、管理员账号、兜底密钥）
 docker compose logs -f app
 ```
+
+> 构建默认走国内源（apt→清华、pip→清华、npm→npmmirror），在国内服务器上快很多；
+> 要用官方源：`docker build --build-arg APT_MIRROR=deb.debian.org --build-arg PIP_INDEX=https://pypi.org/simple -t 408-wrong-cropper .`。
+> 首次构建慢在 apt（约 40 秒）和 pip 装 onnxruntime（1~3 分钟），**这两层之后都会被缓存**，
+> 改代码后重建（`docker compose up -d --build`）只要十几秒。
 
 打开 `http://服务器IP:18100/` 就是用户端，`/admin/` 是管理后台。第一次进管理后台用密钥登录，
 去用户端注册一个和 `ZC_ADMIN_USERS` 同名的账号（注册后自动成为管理员），以后就用账号登录。
